@@ -3,5 +3,6 @@
 
 CMakeListsPrivate.txt
 cmake-build-debug
+cmake-build-mbed
 BUILD
 mbed
