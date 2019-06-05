@@ -28,7 +28,7 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
     this->hardwareStore = new DigitalOut(hs);
     this->hardwareStore->write(0); // hs=0
 
-    //TODO: Set I2C bus speed as 1Mhz (default: 100KHz)
+    //TODO: Set I2C bus speed at 1Mhz (default: 100KHz)
 //    i2c.frequency(1000000);
 }
 
