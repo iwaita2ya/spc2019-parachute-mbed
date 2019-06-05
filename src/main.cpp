@@ -3,8 +3,8 @@
  * https://www.jma.go.jp/jp/amedas_h/today-15356.html?areaCode=000&groupCode=13
  */
 #include <mbed.h>
-//#include "lib/MS5607/MS5607I2C.h"
-#include "lib/SerialSRAM/SerialSRAM.h"
+//#include "../lib/MS5607/MS5607I2C.h"
+#include "../lib/SerialSRAM/SerialSRAM.h"
 
 /**
  * flags
