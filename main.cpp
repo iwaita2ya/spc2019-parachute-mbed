@@ -52,6 +52,9 @@ int main() {
         wait(0.5);
     }
 
-    return 0;
+    // release objects
+    delete serial;
+    delete led;
 
+    return 0;
 }

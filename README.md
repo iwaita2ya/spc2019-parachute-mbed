@@ -1,3 +1,17 @@
+#### pip バージョンの固定
+
+##### pip 9.0.3 以上だと `mbed deploy` に失敗する (pipのバグ)
+
+https://github.com/ARMmbed/mbed-cli/issues/657
+
+    $ mbed deploy
+    [mbed] Updating library "mbed" to rev #e95d10626187
+    [mbed] ERROR: Unknown Error: 'module' object has no attribute 'get_installed_distributions'
+
+##### 対処療法として、pip のバージョンを 9.0.3 まで下げる
+
+    $ python -m pip install pip==9.0.3
+
 #### mbed-cli セットアップ
 
 #####
