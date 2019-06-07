@@ -26,7 +26,7 @@ THE SOFTWARE.
 class MS5607Base {
 public:
     void printCoefficients() {
-        printf("%d, %d, %d, %d, %d, %d\r\n", c1, c2, c3, c4, c5, c6);
+        printf("%ld, %ld, %ld, %ld, %ld, %ld\r\n", c1, c2, c3, c4, c5, c6);
     }
 
     int getRawTemperature() {

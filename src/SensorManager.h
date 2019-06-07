@@ -9,31 +9,33 @@
 #include <MS5607I2C.h>
 
 #define POINT_THRESHOLD 3
-#define DEPLOY_PARACHUTE_AT 30.0f   //MEMO: パラシュート開放高度(m)（地表高度に加算）
+#define DEEM_FLYING_AT      35.0f   //飛行中とみなす高度(m)（地表高度に加算）
+#define DEPLOY_PARACHUTE_AT 30.0f   //パラシュート開放高度(m)（地表高度に加算）
 
 namespace greysound {
 
-class SensorManager {
-
+    class SensorManager {
 
     public:
 
         MS5607I2C *ms5607;
 
         int activeTimeMs;
-        float currentPressure;
-        float currentTemperature;
-        float currentAltitude;
-        float altitudeToDeploy;
-        uint8_t aboveThePointCounter; // 規定高度到達カウンタ
+        float currentPressure;      // 現在の気圧
+        float currentAltitude;      // 現在の高度
+        float groundAltitude;       // 地表高度
+        float deemFlyingAltitude;   // 飛行中とみなす高度（＝飛行高度）
+        float deployAltitude;       // パラシュート開放高度
+        uint8_t deemFlyingAltitudeCounter; // 飛行高度到達カウンタ
+        uint8_t deployAltitudeCounter; // パラシュート開放高度到達カウンタ
 
-        // センサのステータス
+        // センサの状態管理
         enum SensorState {
-            CREATED,
-            STAND_BY,
-            ACTIVE,
-            BUSY,
-            BEGIN_FAILED
+            CREATED,        // インスタンス生成完了
+            STAND_BY,       // データ取得準備完了
+            ACTIVE,         // データ取得中
+            BUSY,           // データ更新中
+            BEGIN_FAILED    // データ取得開始失敗
         };
 
         /**
@@ -45,68 +47,103 @@ class SensorManager {
          */
         SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr)
         {
+            // インスタンス初期化
             ms5607  = new MS5607I2C(_sda, _scl, true); // sda, scl csb(1:0xEC 0:0xEE)
+            activeTimer = new Timer();
 
-            activeTimeMs = 0;
+            // 変数初期化
             currentPressure = 0.0f;
-            currentTemperature = 0.0f;
             currentAltitude = 0.0f;
-            altitudeToDeploy = 0.0f;
-            aboveThePointCounter = 0;
+            deemFlyingAltitude = 0.0f;
+            deployAltitude = 0.0f;
 
+            // カウンタリセット
+            //resetCounters();
+            activeTimeMs = 0;
+            deemFlyingAltitudeCounter = 0;
+            deployAltitudeCounter = 0;
+
+            // CREATED 状態に遷移
             currentState = CREATED;
-
         }
 
+        /**
+         * デストラクタ
+         */
         ~SensorManager(){
             // stop all activities
             end();
 
-            // メモリ解放
+            // release object
             delete ms5607;
-        }
-
-        void init()
-        {
-            // store current altitude
-            setAltitudeToDeploy();
-            aboveThePointCounter = 0;
-
-            currentState = STAND_BY;
+            delete activeTimer;
         }
 
         /**
-         * 落下地点の高度を変数に保存する
-         * @return
+         * データ取得のための準備を行う
          */
-        float setAltitudeToDeploy()
+        uint8_t getStandBy()
         {
-            const uint8_t numberOfSamples = 16;
-            altitudeToDeploy = 0.0f;
+            uint8_t result;
 
-            // serial out ms5607 value (debug only)
-            for (uint8_t i = 0; i<numberOfSamples; i++) {
-                altitudeToDeploy += ms5607->getAltitude();
+            // update ground altitude
+            result = updateAltitudesFromCurrentAltitude();
+
+            // error
+            if(result != 0) {
+                return 1;
             }
 
-            // 現在の高度の平均値にしきい値を加算した値を格納する
-            altitudeToDeploy = (altitudeToDeploy / numberOfSamples) + DEPLOY_PARACHUTE_AT; //TODO: DEPLOY_PARACHUTE_AT を廃止して変数を使用する
+            // カウンタリセット
+            resetCounters();
 
-            return altitudeToDeploy;
+            // スタンバイ状態に遷移
+            currentState = STAND_BY;
+
+            return 0;
+        }
+
+        /**
+         * 現在の高度を地表高度として設定し、それを基に上空高度と開放高度を設定する
+         * @return
+         */
+        uint8_t updateAltitudesFromCurrentAltitude()
+        {
+            const uint8_t numberOfSamples = 16;
+            float groundAltitudeSamples = 0.0f;
+
+            //TODO: 以下の処理で問題が発生した場合は 1 を返す
+
+            // 現在高度をサンプリングする
+            for (uint8_t i = 0; i<numberOfSamples; i++) {
+                groundAltitudeSamples += ms5607->getAltitude();
+            }
+
+            // 現在高度の平均値を地表高度として設定する
+            groundAltitude = (groundAltitudeSamples / numberOfSamples);
+
+            // 飛行中とみなす高度を設定する
+            deemFlyingAltitude = groundAltitude+ DEEM_FLYING_AT; //TODO: DEEM_FLYING_AT を廃止して変数を使用する
+
+            // パラシュート開放高度を設定する
+            deployAltitude = groundAltitude+ DEPLOY_PARACHUTE_AT; //TODO: DEPLOY_PARACHUTE_AT を廃止して変数を使用する
+
+            return 0;
         }
 
         uint8_t begin()
         {
-            // prepare sensor starting
+            // まず STAND_BY の状態まで遷移する
+            uint8_t result = 0;
             switch (currentState) {
                 case CREATED:
                 case BEGIN_FAILED:
-                    this->init();
+                    result = this->getStandBy();
                     break;
 
                 case ACTIVE:
                 case BUSY:
-                    this->end();
+                    this->end(); // 既に実行中の場合は一旦停止
                     break;
 
                 case STAND_BY:
@@ -114,71 +151,96 @@ class SensorManager {
                     break;
             }
 
-            // reset & start timer
-            activeTimer.reset();
-            activeTimer.start();
-            activeTimeMs = 0;
+            // error
+            if(result != 0) {
+                currentState = BEGIN_FAILED;
+                return 1;
+            }
 
-            // reset "Above the deploy point" counter
-            aboveThePointCounter = 0;
+            // カウンタリセット
+            resetCounters();
 
+            // タイマー開始
+            activeTimer->start();
+
+            // ACTIVE 状態に遷移
             currentState = ACTIVE;
-            return 1;
+
+            return 0;
         }
 
         // データを読み取る
-        uint8_t read()
+        uint8_t update()
         {
-            // すでに処理が走っている場合は中止
+            // すでに処理が走っている場合はスキップ（処理自体は成功とする）
             if (currentState == BUSY) {
                 return 0;
             }
 
+            // BUSY 状態に遷移
             currentState = BUSY;
 
             // current time (ms)
-            activeTimeMs = activeTimer.read_ms();
+            activeTimeMs = activeTimer->read_ms();
 
-            // ms5607
-            currentPressure = ms5607->getPressure();
-            currentTemperature = ms5607->getTemperature();
+            // 現在高度を取得
             currentAltitude = ms5607->getAltitude();
-            if(currentAltitude > altitudeToDeploy ) {
-                aboveThePointCounter++;
+
+            // 現在高度が飛行高度を上回っている場合はカウントアップ
+            if(currentAltitude > deemFlyingAltitude && deemFlyingAltitudeCounter < POINT_THRESHOLD) {
+                deemFlyingAltitudeCounter++;
             }
 
+            // 飛行状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
+            if( isFlying() && currentAltitude < deployAltitude && deployAltitudeCounter < POINT_THRESHOLD) {
+                deployAltitudeCounter++;
+            }
+
+            // ACTIVE 状態に戻る
             currentState = ACTIVE;
 
-            return 1;
+            return 0;
         }
 
         /**
          * ステータスに関係なく強制的にセンサの値を更新する
          * (速度が要求されない待機状態での使用を想定)
          */
-        void forceRead()
+        void updateForced()
         {
             // ms5607
             currentPressure = ms5607->getPressure();
-            currentTemperature = ms5607->getTemperature();
             currentAltitude = ms5607->getAltitude();
         }
 
         void end()
         {
-            activeTimer.stop();
+            activeTimer->stop();
             currentState = STAND_BY;
         }
 
-        bool shouldDeployParachute()
+        /**
+         * 飛行状態か？（＝飛行高度に達しているか？）
+         * @return
+         */
+        bool isFlying()
         {
-            if(aboveThePointCounter < POINT_THRESHOLD) {
-                return false;
-            }
-
-            return currentAltitude <= altitudeToDeploy;
+            return (deemFlyingAltitudeCounter >= POINT_THRESHOLD);
         }
 
+        /**
+         * パラシュートを開放してもよい状態か？
+         * @return
+         */
+        bool isOkToDeployParachute()
+        {
+            return (deployAltitudeCounter >= POINT_THRESHOLD);
+        }
+
+        /**
+         * ステータス状態を返す
+         * @return
+         */
         SensorState getCurrentState()
         {
             return currentState;
@@ -188,7 +250,16 @@ class SensorManager {
 
     private:
         SensorState currentState;
-        Timer activeTimer;
+        Timer *activeTimer;
+
+        /**
+         * カウンタ群リセット
+         */
+        void resetCounters() {
+            activeTimeMs = 0;
+            deemFlyingAltitudeCounter = 0;
+            deployAltitudeCounter = 0;
+        }
 
     };
 

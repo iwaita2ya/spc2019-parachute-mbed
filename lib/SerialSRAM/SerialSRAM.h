@@ -25,14 +25,16 @@ public:
 
     // Constructor
     SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2=0, const uint8_t A1=0);
-    virtual ~SerialSRAM() = default;
+    virtual ~SerialSRAM() {
+        delete hardwareStore;
+    }
 
     /**
      * SRAM Read Operations
      */
     uint8_t read(char *buffer); // Read from current address (1 Byte)
-    uint8_t read(const uint16_t address, char *buffer); // Random read (1 Byte)
-    uint8_t read(const uint16_t address, char *buffer, const uint16_t size); // Seq. read w/ address (Multiple Bytes)
+    uint8_t read(const uint16_t address, char *buffer); // Random update (1 Byte)
+    uint8_t read(const uint16_t address, char *buffer, const uint16_t size); // Seq. update w/ address (Multiple Bytes)
 
     /**
      * SRAM Write Operations

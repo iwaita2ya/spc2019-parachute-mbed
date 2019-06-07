@@ -10,13 +10,30 @@
 
 #define BUFFER_SIZE 16
 #define CONFIG_MEMORY_AREA_SIZE 30
+#define SENSOR_UPDATE_FREQ 0.1
 
 using namespace greysound;
 
 /**
  * flags
  */
-uint8_t isActive;
+uint8_t shouldLoop;
+uint8_t currentState;
+
+// 状態管理
+enum MCUState {
+    STAND_BY,   // 準備完了
+    GET_START,  // 開始指示受信
+    BUSY,       // 開始中
+    GET_PAUSE,  // 一時停止
+    ERROR       // エラー発生
+};
+
+enum RESULTS {
+    RESULT_OK = 0,
+    RESULT_NG = 1
+};
+
 
 /**
  * Serial Port
@@ -95,27 +112,24 @@ static void changeServoState();
 static void setAltitude();
 
 // ----- Sensor Manager -----
-static void startSensor();
+static uint8_t startSensor();
 static void updateSensor();
-static void stopSensor();
+static uint8_t stopSensor();
 
 
 // Main  ----------------------------------------------------------------------
 int main() {
     /**
-     * Init
+     * Init Objects/Vars
      */
     // set active flag
-    isActive = 1;
+    shouldLoop = 1;
 
-    // init LED
-    led = new DigitalOut(dp14);
-
-    // set serial baud rate
+    // getStandBy serial baud rate
     serial = new RawSerial(dp16, dp15); // tx, rx
     serial->baud(115200); // default:9600bps
 
-    // init SRAM
+    // getStandBy SRAM
     sram = new SerialSRAM(dp5, dp27, dp26); // sda, scl, hs, A2=0, A1=0
     config = new SystemArea();
 //    loadConfig();
@@ -123,61 +137,86 @@ int main() {
     //-----------
     // SRAM TEST //MEMO: まだ途中
     //-----------
-//    // write single byte
-////    sram->write(0x0000, 0x55); // 0x55 = 0101 0101
-////    sram->write(0x07ff, 0xaa); // 0xaa = 1010 1010
 //    // reset config with default value
 //    resetConfig();
 //    // dump config
 //    dumpConfig();
-////    dumpAll();
 
-    // init ServoManager
+    // getStandBy ServoManager
     servoManager = new ServoManager(dp18);
     servoManager->setRange(0.03f, 0.037f); // minValue, maxValue
     servoManager->init();
     servoManager->moveRight(); // open
 
-    //-----------
-    // Servo Test
-    //-----------
-//    servoManager->moveLeft(); // close
-//    wait(5.0f);
-//    servoManager->moveRight(); // open
-
-    // init SensorManager (and Ticker)
+    // getStandBy SensorManager (and Ticker)
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(dp5, dp27, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
-    sensorManager->init();
+    sensorManager->getStandBy();
 
-    //-------------------------------------
-    // 割り込み設定
-    //-------------------------------------
-    // サーボ操作ボタン
-    servoControlPin = new InterruptIn(dp17);
+    // getStandBy buttons #1
+    servoControlPin = new InterruptIn(dp17);// サーボ操作ボタン
     servoControlPin->mode(PullUp);
     servoControlPin->fall(&changeServoState);
 
-    // 地表高度設定ボタン
-    setAltitudePin = new InterruptIn(dp28);
+    // getStandBy buttons #2
+    setAltitudePin = new InterruptIn(dp28); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
     setAltitudePin->fall(&setAltitude);
 
-    //-----------
-    // Main Loop
-    //-----------
-    while(isActive == 1) {
-        led->write(!(led->read())); // reverse value
-        wait(0.5);
+    // getStandBy LED
+    led = new DigitalOut(dp14);
+
+    // スタンバイ状態に遷移する
+    currentState = STAND_BY;
+
+    /**
+     * Main Loop
+     */
+    while(shouldLoop == 1) {
+        //TODO: ステータスに応じて処理を分岐させる
+        uint8_t result = 0;
+        switch (currentState) {
+
+            case GET_START:
+                result = startSensor();
+                // 開始成功なら BUSY 状態に遷移
+                if(result == RESULT_OK) {
+                    currentState = BUSY;
+                }
+                break;
+
+            case GET_PAUSE:
+                result = stopSensor();
+                // 停止成功なら STAND_BY 状態に遷移
+                if(result == RESULT_OK) {
+                    currentState = STAND_BY;
+                }
+                break;
+
+            default:
+                // blink LED
+                led->write(!(led->read())); // reverse value
+                wait(0.5);
+                break;
+        }
     }
+
+    /**
+     * Exit
+     */
+    sensorTicker->detach();
 
     // release objects
     delete led;
+    delete setAltitudePin;
+    delete servoControlPin;
+    delete sensorManager;
+    delete sensorTicker;
     delete servoManager;
     delete sram;
     delete serial;
 
-    return 0;
+    return RESULT_OK;
 }
 
 // Functions  -----------------------------------------------------------------
@@ -231,7 +270,7 @@ void dumpConfig() {
 
 void resetConfig() {
 
-    // init config with default value
+    // getStandBy config with default value
     config->pressureAt0m     = 0.0f;
     config->pressureAtGround = 0.0f;
     config->aboveTheSkyAt    = 30;
@@ -251,7 +290,7 @@ void resetConfig() {
 void loadConfig() {
 
     char *buffer = new char[CONFIG_MEMORY_AREA_SIZE];
-    sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // read 0x0000-0x0019
+    sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // update 0x0000-0x0019
 
     config->pressureAt0m     = (float) (buffer[3] >> 24 || buffer[2] >> 16 || buffer[1] >> 8 || buffer[0]);
     config->pressureAtGround = (float) (buffer[7] >> 24 || buffer[6] >> 16 || buffer[5] >> 8 || buffer[4]);
@@ -290,36 +329,46 @@ static void setAltitude()
     if(sensorManager != NULL)
     {
         // 地表高度設定
-        sensorManager->setAltitudeToDeploy();
+        sensorManager->updateAltitudesFromCurrentAltitude();
     }
 }
 
 // センサ操作  ----------------------------------------------------------------
-static void startSensor()
+static uint8_t startSensor()
 {
     // センサ開始
     if(sensorManager && sensorManager->getCurrentState() == SensorManager::STAND_BY)
     {
-        sensorManager->begin();
+        uint8_t result = sensorManager->begin();
+
+        // error
+        if(result != 0) {
+            return RESULT_NG;
+        }
+    } else {
+        // couldn't start sensor
+        return RESULT_NG;
     }
 
     // センサ値更新処理開始
     if(sensorTicker) {
-        sensorTicker->attach(&updateSensor, 0.1); // MEMO:センサ更新間隔
+        sensorTicker->attach(&updateSensor, SENSOR_UPDATE_FREQ); //MEMO: only :void can be attached
     }
+
+    return RESULT_OK;
 }
 
 /**
- * センサ情報を定期的に更新する
+ * センサ情報を更新する
  */
 static void updateSensor()
 {
     if(sensorManager) {
-        sensorManager->read();
+        sensorManager->update();
     }
 }
 
-static void stopSensor()
+static uint8_t stopSensor()
 {
     // センサ値更新処理停止
     if(sensorTicker) {
@@ -330,4 +379,6 @@ static void stopSensor()
     if(sensorManager && sensorManager->getCurrentState() != SensorManager::STAND_BY) {
         sensorManager->end();
     }
+
+    return RESULT_OK;
 }
