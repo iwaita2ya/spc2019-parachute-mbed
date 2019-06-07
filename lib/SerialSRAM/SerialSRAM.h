@@ -25,6 +25,7 @@ public:
 
     // Constructor
     SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2=0, const uint8_t A1=0);
+    virtual ~SerialSRAM() = default;
 
     /**
      * SRAM Read Operations

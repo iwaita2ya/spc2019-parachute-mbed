@@ -30,6 +30,7 @@ public:
     MS5607I2C(PinName sda, PinName scl, int csb = 0) : i2c(sda, scl), i2cAddr(csb ? 0xEC : 0xEE) {
         init();
     }
+    virtual ~MS5607I2C() = default;
 
 private:
     I2C i2c;

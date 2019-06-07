@@ -11,6 +11,7 @@ SET(CMAKE_ASM_COMPILER    "/home/iwait/opt/gcc-arm-none-eabi/bin/arm-none-eabi-g
 SET(CMAKE_C_COMPILER      "/home/iwait/opt/gcc-arm-none-eabi/bin/arm-none-eabi-gcc")
 SET(CMAKE_CXX_COMPILER    "/home/iwait/opt/gcc-arm-none-eabi/bin/arm-none-eabi-g++")
 SET(ELF2BIN               "/home/iwait/opt/gcc-arm-none-eabi/bin/arm-none-eabi-objcopy")
+set(CMAKE_CXX_STANDARD 11)
 
 # if the environment does not specify build type, set to Debug
 IF(NOT CMAKE_BUILD_TYPE)
