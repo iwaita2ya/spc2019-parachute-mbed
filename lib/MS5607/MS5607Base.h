@@ -112,7 +112,7 @@ protected:
         const float g = 9.80665; // standard gravity 
         const float t_grad = 0.0065; // gradient of temperature
         const float t0 = 273.15f + 15; // temperature at 0 altitude
-        const float p0 = 101820; // pressure at 0 altitude
+        const float p0 = 101100; // pressure at 0 altitude　(Pa: 100Pa=1hPa) //MEMO: 日毎変化する
 
         return t0 / t_grad * (1 - exp((t_grad * R / g) * log(pressure / p0)));
     }

@@ -111,11 +111,14 @@ static void changeServoState();
 // ----- ALTIMETER -----
 static void setAltitude();
 
-// ----- Sensor Manager -----
+// ----- Sensor -----
 static uint8_t startSensor();
 static void updateSensor();
 static uint8_t stopSensor();
+void dumpSensorValues();
 
+// ----- Utils -----
+int32_t x10(float);
 
 // Main  ----------------------------------------------------------------------
 int main() {
@@ -151,7 +154,12 @@ int main() {
     // getStandBy SensorManager (and Ticker)
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(dp5, dp27, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
-    sensorManager->getStandBy();
+    sensorManager->getStandBy(); //reset altitude, reset counter, then set as STAND_BY
+
+    //-----------
+    // SENSOR TEST
+    //-----------
+    dumpSensorValues();
 
     // getStandBy buttons #1
     servoControlPin = new InterruptIn(dp17);// サーボ操作ボタン
@@ -306,8 +314,75 @@ void loadConfig() {
 }
 
 /**
- * ボタン押下に応じてサーボの開閉を行う
+ * SENSOR
  */
+
+// センサ開始
+static uint8_t startSensor()
+{
+    // センサ開始
+    if(sensorManager && sensorManager->getCurrentState() == SensorManager::STAND_BY)
+    {
+        uint8_t result = sensorManager->begin();
+
+        // error
+        if(result != 0) {
+            return RESULT_NG;
+        }
+    } else {
+        // couldn't start sensor
+        return RESULT_NG;
+    }
+
+    // センサ値更新処理開始
+    if(sensorTicker) {
+        sensorTicker->attach(&updateSensor, SENSOR_UPDATE_FREQ); //MEMO: only :void can be attached
+    }
+
+    return RESULT_OK;
+}
+
+// センサ情報を更新する
+static void updateSensor()
+{
+    if(sensorManager) {
+        sensorManager->update();
+    }
+}
+
+static uint8_t stopSensor()
+{
+    // センサ値更新処理停止
+    if(sensorTicker) {
+        sensorTicker->detach();
+    }
+
+    // センサ停止
+    if(sensorManager && sensorManager->getCurrentState() != SensorManager::STAND_BY) {
+        sensorManager->end();
+    }
+
+    return RESULT_OK;
+}
+
+//
+void dumpSensorValues() {
+    if(sensorManager != NULL) {
+        sensorManager->updateForced();
+        serial->printf("\r\n----------------------");
+        serial->printf("\r\n dumpSensorValues()");
+        serial->printf("\r\n----------------------");
+        serial->printf("\r\nPressure: %ld", (uint32_t)(sensorManager->currentPressure));
+        serial->printf("\r\nALT(x10): %ld", (uint32_t)x10(sensorManager->currentAltitude));
+        serial->printf("\r\nTMP(x10): %ld", (uint32_t)x10(sensorManager->currentTemperature));
+    }
+}
+
+/**
+ * BUTTONS
+ */
+
+// ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
     static uint8_t currentState = 0;
@@ -333,52 +408,25 @@ static void setAltitude()
     }
 }
 
-// センサ操作  ----------------------------------------------------------------
-static uint8_t startSensor()
-{
-    // センサ開始
-    if(sensorManager && sensorManager->getCurrentState() == SensorManager::STAND_BY)
-    {
-        uint8_t result = sensorManager->begin();
-
-        // error
-        if(result != 0) {
-            return RESULT_NG;
-        }
-    } else {
-        // couldn't start sensor
-        return RESULT_NG;
-    }
-
-    // センサ値更新処理開始
-    if(sensorTicker) {
-        sensorTicker->attach(&updateSensor, SENSOR_UPDATE_FREQ); //MEMO: only :void can be attached
-    }
-
-    return RESULT_OK;
-}
-
 /**
- * センサ情報を更新する
+ * Utils
  */
-static void updateSensor()
+
+int32_t x10(float val)
 {
-    if(sensorManager) {
-        sensorManager->update();
+    int32_t int32 = (int16_t)(val * 100);
+    if( int32 % 10 >= 5 )
+    {
+        int32 = (int16_t)((int32 / 10) + 1);
     }
-}
-
-static uint8_t stopSensor()
-{
-    // センサ値更新処理停止
-    if(sensorTicker) {
-        sensorTicker->detach();
+    else if( int32 % 10 <= -5 )
+    {
+        int32 = (int16_t)((int32 / 10) - 1);
     }
-
-    // センサ停止
-    if(sensorManager && sensorManager->getCurrentState() != SensorManager::STAND_BY) {
-        sensorManager->end();
+    else
+    {
+        int32 /= 10 ;
     }
 
-    return RESULT_OK;
+    return int32 ;
 }

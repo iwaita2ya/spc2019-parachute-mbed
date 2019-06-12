@@ -23,6 +23,7 @@ namespace greysound {
         int activeTimeMs;
         float currentPressure;      // 現在の気圧
         float currentAltitude;      // 現在の高度
+        float currentTemperature;   // 現在の気温
         float groundAltitude;       // 地表高度
         float deemFlyingAltitude;   // 飛行中とみなす高度（＝飛行高度）
         float deployAltitude;       // パラシュート開放高度
@@ -211,6 +212,7 @@ namespace greysound {
             // ms5607
             currentPressure = ms5607->getPressure();
             currentAltitude = ms5607->getAltitude();
+            currentTemperature = ms5607->getTemperature();
         }
 
         void end()
