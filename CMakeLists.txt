@@ -31,7 +31,7 @@ SET(LD_SYS_LIBS "-Wl,--start-group -lstdc++ -lsupc++ -lm -lc -lgcc -lnosys -lmbe
 SET(CMAKE_C_FLAGS "-std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -fmessage-length=0 -fno-exceptions -fno-builtin -ffunction-sections -fdata-sections -funsigned-char -MMD -fno-delete-null-pointer-checks -fomit-frame-pointer -Os -g1 -DMBED_TRAP_ERRORS_ENABLED=1 -DMBED_RTOS_SINGLE_THREAD -mcpu=cortex-m0 -mthumb -include mbed_config.h")
 #SET(CMAKE_CXX_FLAGS "-std=gnu++98 -fno-rtti -Wvla -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -fmessage-length=0 -fno-exceptions -fno-builtin -ffunction-sections -fdata-sections -funsigned-char -MMD -fno-delete-null-pointer-checks -fomit-frame-pointer -Os -g1 -DMBED_TRAP_ERRORS_ENABLED=1 -DMBED_RTOS_SINGLE_THREAD -mcpu=cortex-m0 -mthumb  -include mbed_config.h")
 SET(CMAKE_ASM_FLAGS "-x assembler-with-cpp -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -fmessage-length=0 -fno-exceptions -fno-builtin -ffunction-sections -fdata-sections -funsigned-char -MMD -fno-delete-null-pointer-checks -fomit-frame-pointer -Os -g1 -DMBED_TRAP_ERRORS_ENABLED=1 -DMBED_RTOS_SINGLE_THREAD -mcpu=cortex-m0 -mthumb  -include mbed_config.h")
-SET(CMAKE_CXX_LINK_FLAGS "-Wl,--gc-sections -Wl,--wrap,main -Wl,--wrap,__malloc_r -Wl,--wrap,__free_r -Wl,--wrap,__realloc_r -Wl,--wrap,__memalign_r -Wl,--wrap,__calloc_r -Wl,--wrap,exit -Wl,--wrap,atexit -Wl,-n --specs=nano.specs -mcpu=cortex-m0 -mthumb  -L${CMAKE_CURRENT_SOURCE_DIR}/mbed/TARGET_LPC1114/TOOLCHAIN_GCC_ARM ")
+SET(CMAKE_CXX_LINK_FLAGS "-Wl,--gc-sections -Wl,--wrap,main -Wl,--wrap,__malloc_r -Wl,--wrap,__free_r -Wl,--wrap,__realloc_r -Wl,--wrap,__memalign_r -Wl,--wrap,__calloc_r -Wl,--wrap,exit -Wl,--wrap,atexit -Wl,-n --specs=nano.specs -mcpu=cortex-m0 -mthumb  -L${CMAKE_CURRENT_SOURCE_DIR}/mbed/TARGET_LPC11U35_401/TOOLCHAIN_GCC_ARM ")
 SET(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${LD_SYS_LIBS} -T ${CMAKE_BINARY_DIR}/mbed_blinky_pp.link_script.ld")
 
 ADD_DEFINITIONS(
@@ -77,11 +77,11 @@ INCLUDE_DIRECTORIES(
         mbed/e95d10626187/platform
         mbed/e95d10626187/hal
         mbed/e95d10626187/drivers
-        mbed/e95d10626187/TARGET_LPC1114/TARGET_NXP/TARGET_LPC11XX_11CXX/device
-        mbed/e95d10626187/TARGET_LPC1114/TARGET_NXP/TARGET_LPC11XX_11CXX/TARGET_LPC11XX
-        mbed/e95d10626187/TARGET_LPC1114/TARGET_NXP/TARGET_LPC11XX_11CXX
-        mbed/e95d10626187/TARGET_LPC1114/TARGET_NXP
-        mbed/e95d10626187/TARGET_LPC1114
+        mbed/e95d10626187/TARGET_LPC11U35_401/TARGET_NXP/TARGET_LPC11UXX/device
+        mbed/e95d10626187/TARGET_LPC11U35_401/TARGET_NXP/TARGET_LPC11UXX/TARGET_LPC11U35_401
+        mbed/e95d10626187/TARGET_LPC11U35_401/TARGET_NXP/TARGET_LPC11UXX
+        mbed/e95d10626187/TARGET_LPC11U35_401/TARGET_NXP
+        mbed/e95d10626187/TARGET_LPC11U35_401
         mbede95d10626187
         /usr/src/mbed-sdk
 )
@@ -102,7 +102,7 @@ SET_TARGET_PROPERTIES(spc2019-parachute-mbed PROPERTIES ENABLE_EXPORTS 1)
 TARGET_LINK_LIBRARIES(spc2019-parachute-mbed -lstdc++ -lsupc++ -lm -lc -lgcc -lnosys)
 
 add_custom_command(TARGET spc2019-parachute-mbed PRE_LINK
-        COMMAND "arm-none-eabi-cpp" -E -P -Wl,--gc-sections -Wl,--wrap,main -Wl,--wrap,_malloc_r -Wl,--wrap,_free_r -Wl,--wrap,_realloc_r -Wl,--wrap,_memalign_r -Wl,--wrap,_calloc_r -Wl,--wrap,exit -Wl,--wrap,atexit -Wl,-n --specs=nano.specs -mcpu=cortex-m0 -mthumb mbed/TARGET_LPC1114/TOOLCHAIN_GCC_ARM/LPC1114.ld -o ${CMAKE_CURRENT_BINARY_DIR}/mbed_blinky_pp.link_script.ld
+        COMMAND "arm-none-eabi-cpp" -E -P -Wl,--gc-sections -Wl,--wrap,main -Wl,--wrap,_malloc_r -Wl,--wrap,_free_r -Wl,--wrap,_realloc_r -Wl,--wrap,_memalign_r -Wl,--wrap,_calloc_r -Wl,--wrap,exit -Wl,--wrap,atexit -Wl,-n --specs=nano.specs -mcpu=cortex-m0 -mthumb mbed/TARGET_LPC11U35_401/TOOLCHAIN_GCC_ARM/LPC1114.ld -o ${CMAKE_CURRENT_BINARY_DIR}/mbed_blinky_pp.link_script.ld
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/mbed_blinky_pp.link_script.ld"
         )

@@ -129,11 +129,11 @@ int main() {
     shouldLoop = 1;
 
     // getStandBy serial baud rate
-    serial = new RawSerial(dp16, dp15); // tx, rx
+    serial = new RawSerial(P0_19, P0_18); // tx, rx
     serial->baud(115200); // default:9600bps
 
     // getStandBy SRAM
-    sram = new SerialSRAM(dp5, dp27, dp26); // sda, scl, hs, A2=0, A1=0
+    sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
     config = new SystemArea();
 //    loadConfig();
 
@@ -146,14 +146,14 @@ int main() {
 //    dumpConfig();
 
     // getStandBy ServoManager
-    servoManager = new ServoManager(dp18);
+    servoManager = new ServoManager(P0_22);
     servoManager->setRange(0.03f, 0.037f); // minValue, maxValue
     servoManager->init();
     servoManager->moveRight(); // open
 
     // getStandBy SensorManager (and Ticker)
     sensorTicker  = new Ticker();
-    sensorManager = new SensorManager(dp5, dp27, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
+    sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
     sensorManager->getStandBy(); //reset altitude, reset counter, then set as STAND_BY
 
     //-----------
@@ -161,18 +161,18 @@ int main() {
     //-----------
     dumpSensorValues();
 
-    // getStandBy buttons #1
-    servoControlPin = new InterruptIn(dp17);// サーボ操作ボタン
+    // Servo Open/Close Buttons
+    servoControlPin = new InterruptIn(P0_20);// サーボ操作ボタン
     servoControlPin->mode(PullUp);
     servoControlPin->fall(&changeServoState);
 
-    // getStandBy buttons #2
-    setAltitudePin = new InterruptIn(dp28); // 地表高度設定ボタン
+    // Set Altitude Button
+    setAltitudePin = new InterruptIn(P1_19); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
     setAltitudePin->fall(&setAltitude);
 
-    // getStandBy LED
-    led = new DigitalOut(dp14);
+    // Status LED
+    led = new DigitalOut(P0_7);
 
     // スタンバイ状態に遷移する
     currentState = STAND_BY;
