@@ -1,8 +1,11 @@
 #define DEBUG
 
 /**
- * 最新の気圧情報（岩見沢）
+ * 最新の気圧情報
+ * --- 岩見沢 ---
  * https://www.jma.go.jp/jp/amedas_h/today-15356.html?areaCode=000&groupCode=13
+ * --- 札幌 ---
+ * https://www.jma.go.jp/jp/amedas_h/today-14163.html?areaCode=000&groupCode=12
  */
 #include <mbed.h>
 #include "MS5607I2C.h"
@@ -21,6 +24,7 @@ using namespace greysound;
  */
 uint8_t shouldLoop;
 uint8_t currentState;
+uint8_t enableSerial = 1;
 
 // 状態管理
 enum MCUState {
@@ -44,22 +48,22 @@ RawSerial *serial;
 
 
 // Circular buffers for serial TX and RX data - used by interrupt routines
-const int buffer_size = 255;
+const int serialBufferSize = 255;
 
 // might need to increase buffer size for high baud rates
-char tx_buffer[buffer_size+1];
-char rx_buffer[buffer_size+1];
+char txBuffer[serialBufferSize+1];
+char rxBuffer[serialBufferSize+1];
 
 // Circular buffer pointers
 // volatile makes read-modify-write atomic
-volatile int tx_in=0;
-volatile int tx_out=0;
-volatile int rx_in=0;
-volatile int rx_out=0;
+volatile int txInPointer=0;
+volatile int txOutPointer=0;
+volatile int rxInPointer=0;
+volatile int rxOutPointer=0;
 
 // Line buffers for sprintf and sscanf
-char tx_line[80];
-char rx_line[80];
+char txLineBuffer[80];
+char rxLineBuffer[80];
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x)  serial.printf(x)
@@ -92,24 +96,24 @@ DigitalOut *led; // LED
 
 /**
  * SRAM
- *
- * 0x0000-0x0003 float    海抜0mの気圧 (hPa)
- * 0x0004-0x0007 float    地上の気圧 (hPa)
- * 0x0008        uint8_t  上空判定 (0-255m)
- * 0x0009        uint8_t  開放判定 (0-255m)
- * 0x000a-0x000d float    サーボ周期 Futaba:20ms(0.020f)
- * 0x000e-0x0011 float    サーボ開 duty比 (0-1.0f)
- * 0x0012-0x0015 float    サーボ閉 duty比 (0-1.0f)
- * 0x0016        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
- * 0x0017-0x001a time_t   ロギング開始時刻(RTCから取得する）
- * 0x001b-0x001c uint16_t 最終ログ格納アドレス (0x0020-0x0800)
- * 0x001d        uint8_t  ステータスフラグ格納領域
- * 0x001e-0x001f          (予備)
+ * 0x0000        uint8_t  ステータスフラグ格納領域
+ * 0x0001-0x0004 float    海抜0mの気圧 (hPa)
+ * 0x0005-0x0008 float    地上の気圧 (hPa)
+ * 0x0009        uint8_t  上空判定 (0-255m)
+ * 0x000A        uint8_t  開放判定 (0-255m)
+ * 0x000B-0x000E float    サーボ周期 Futaba:20ms(0.020f)
+ * 0x000F-0x0012 float    サーボ開 duty比 (0-1.0f)
+ * 0x0013-0x0016 float    サーボ閉 duty比 (0-1.0f)
+ * 0x0017        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
+ * 0x0018-0x001B time_t   ロギング開始時刻(RTCから取得する）
+ * 0x001C-0x001D uint16_t 最終ログ格納アドレス (0x0020-0x0800)
+ * 0x001E-0x001F          (予備)
  * 0x0020-0x0800          ログデータ格納領域
  */
 SerialSRAM *sram;
 
 struct SystemArea {
+    uint8_t statusFlags;
     float pressureAt0m;
     float pressureAtGround;
     uint8_t aboveTheSkyAt;
@@ -120,24 +124,28 @@ struct SystemArea {
     uint8_t enableLogging;
     time_t logStartTime;
     uint16_t lastLogAddress;
-    uint8_t statusFlags;
 };
 SystemArea *config; // 設定情報を格納する
 
 // Function Prototypes --------------------------------------------------------
 
 // ----- Serial -----
-void Tx_interrupt();
-void Rx_interrupt();
-void send_line();
-void read_line();
+void interruptTx();
+void interruptRx();
+void sendLine();
+void readLine();
 
 // ----- SRAM -----
-void dumpAll();                         // dump all data in SRAM
-void dumpConfig();                      // dump config memory area in SRAM
+void getStatus();           // get config data from SRAM
+void getStatusReadable();   // get config data from SRAM (in readable format)
+void updateStatus(uint8_t newStatus);
+void getConfig();           // get config data from SRAM
+void getConfigReadable();   // get config data from SRAM (in readable format)
+void resetConfig();         // reset config with default value;
+void loadConfig();          // load config data from SRAM
+void dumpMemory();          // dump all data in SRAM
+void dumpMemoryReadable();  // dump all data in SRAM (in readable format)
 void clearLog(uint16_t startAddress);   // clear logged data, not config
-void resetConfig();                     // reset config with default value;
-void loadConfig();                      // load config data from SRAM
 
 // ----- SERVO -----
 static void changeServoState();
@@ -149,7 +157,8 @@ static void setAltitude();
 static uint8_t startSensor();
 static void updateSensor();
 static uint8_t stopSensor();
-void dumpSensorValues();
+void getSensorValues();
+void getSensorValuesReadable();
 
 // ----- Utils -----
 int32_t x10(float);
@@ -167,19 +176,19 @@ int main() {
     serial = new RawSerial(P0_19, P0_18); // tx, rx
     serial->baud(115200); // default:9600bps
     // set interrupts for Tx/Rx
-    serial->attach(&Rx_interrupt, Serial::RxIrq);
-    serial->attach(&Tx_interrupt, Serial::TxIrq);
+    serial->attach(&interruptRx, Serial::RxIrq);
+    serial->attach(&interruptTx, Serial::TxIrq);
 
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
     config = new SystemArea();
-//    loadConfig();
+    loadConfig(); //TODO: 値の妥当性を検証する
 
     //-----------
     // SRAM TEST //MEMO: まだ途中
     //-----------
-//    resetConfig(); // reset config with default value
-    dumpConfig();
+    //resetConfig(); // reset config with default value
+    //getConfigReadable();
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -195,7 +204,7 @@ int main() {
     //-----------
     // SENSOR TEST
     //-----------
-    dumpSensorValues();
+    //getSensorValuesReadable();
 
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン P0_20
@@ -238,11 +247,84 @@ int main() {
                 break;
 
             default:
-                // blink LED
-                led->write(!(led->read())); // reverse value
-                wait(0.5);
                 break;
         }
+
+        /**
+         * 受信データの最初の1バイトがコマンドバイト(CB)
+         * 更新系のコマンドについては、CBの後に更新値が1−20バイト続く
+         * 0x00 ステータス取得
+         * 0x10 ステータス取得 (human readable)
+         * 0x20 ステータス更新
+         * 0x30 ステータスクリア
+         * 0x40 設定取得
+         * 0x50 設定取得 (human readable)
+         * 0x60 設定更新
+         * 0x70 設定初期化
+         * 0x80 ログ取得
+         * 0x90 ログクリア
+         * 0xA0 メモリダンプ
+         * 0xB0 メモリダンプ (human readable)
+         * 0xC0 センサ値取得
+         * 0xD0 センサ値取得 (human readable)
+         */
+        if(enableSerial == 1) {
+
+            // data received and not read yet?
+            if (rxInPointer != rxOutPointer) {
+
+                readLine();
+                char commandByte = rxLineBuffer[0];
+
+                switch (commandByte) {
+                    case 0x00: // ステータス取得
+                        getStatus();
+                        break;
+                    case 0x10: // ステータス取得（フォーマット済）
+                        getStatusReadable();
+                        break;
+                    case 0x20: // ステータス更新
+                        updateStatus(rxLineBuffer[1]);
+                        break;
+                    case 0x30: // ステータス初期化
+                        updateStatus(0x00);
+                        break;
+                    case 0x40: // 設定取得
+                        getConfig();
+                        break;
+                    case 0x50: // 設定取得（フォーマット済）
+                        getConfigReadable();
+                        break;
+                    case 0x60: //TODO: 設定更新
+                        break;
+                    case 0x70: // 設定初期化
+                        resetConfig();
+                        break;
+                    case 0x80: //TODO: ログ取得
+                        break;
+                    case 0x90: //TODO: ログ初期化
+                        break;
+                    case 0xA0: // メモリダンプ
+                        dumpMemory();
+                        break;
+                    case 0xB0: // メモリダンプ（フォーマット済）
+                        dumpMemoryReadable();
+                        break;
+                    case 0xC0: //TODO: センサ値取得
+                        getSensorValues();
+                        break;
+                    case 0xD0: // センサ値取得（フォーマット済）
+                        getSensorValuesReadable();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        // blink LED
+        led->write(!(led->read())); // reverse value
+        wait(0.5);
     }
 
     /**
@@ -269,7 +351,7 @@ int main() {
  */
 
 // Copy tx line buffer to large tx buffer for tx interrupt routine
-void send_line() {
+void sendLine() {
 
     // null check
     if(serial == NULL) {
@@ -283,28 +365,29 @@ void send_line() {
 
     // Start Critical Section - don't interrupt while changing global buffer variables
     NVIC_DisableIRQ(UART_IRQn);
-    empty = (tx_in == tx_out);
+    empty = (txInPointer == txOutPointer);
 
-    while ((i==0) || (tx_line[i-1] != '\n')) {
+    while ((i==0) || (txLineBuffer[i-1] != '\n')) {
         // Wait if buffer full
-        if (((tx_in + 1) % buffer_size) == tx_out) {
+        if (((txInPointer + 1) % serialBufferSize) == txOutPointer) {
 
             // End Critical Section - need to let interrupt routine empty buffer by sending
             NVIC_EnableIRQ(UART_IRQn);
-            while (((tx_in + 1) % buffer_size) == tx_out) {
+            while (((txInPointer + 1) % serialBufferSize) == txOutPointer) {
             }
 
             // Start Critical Section - don't interrupt while changing global buffer variables
             NVIC_DisableIRQ(UART_IRQn);
         }
 
-        tx_buffer[tx_in] = tx_line[i];
+        txBuffer[txInPointer] = txLineBuffer[i];
         i++;
-        tx_in = (tx_in + 1) % buffer_size;
+        txInPointer = (txInPointer + 1) % serialBufferSize;
     }
+
     if (serial->writeable() && (empty)) {
-        temp_char = tx_buffer[tx_out];
-        tx_out = (tx_out + 1) % buffer_size;
+        temp_char = txBuffer[txOutPointer];
+        txOutPointer = (txOutPointer + 1) % serialBufferSize;
         // Send first character to start tx interrupts, if stopped
         serial->putc(temp_char);
     }
@@ -314,7 +397,7 @@ void send_line() {
 
 
 // Read a line from the large rx buffer from rx interrupt routine
-void read_line() {
+void readLine() {
 
     // null check
     if(serial == NULL) {
@@ -327,32 +410,20 @@ void read_line() {
     NVIC_DisableIRQ(UART_IRQn);
 
     // Loop reading rx buffer characters until end of line character
-    while ((i==0) || (rx_line[i-1] != '\r')) {
-
-        // Wait if buffer empty
-        if (rx_in == rx_out) {
-
-            // End Critical Section - need to allow rx interrupt to get new characters for buffer
-            NVIC_EnableIRQ(UART_IRQn);
-            while (rx_in == rx_out) {
-            }
-
-            // Start Critical Section - don't interrupt while changing global buffer variables
-            NVIC_DisableIRQ(UART_IRQn);
-        }
-        rx_line[i] = rx_buffer[rx_out];
+    while ((i==0) || (rxLineBuffer[i-1] != '\r')) { // '\r' = 0x0d
+        rxLineBuffer[i] = rxBuffer[rxOutPointer];
         i++;
-        rx_out = (rx_out + 1) % buffer_size;
+        rxOutPointer = (rxOutPointer + 1) % serialBufferSize;
     }
 
     // End Critical Section
     NVIC_EnableIRQ(UART_IRQn);
-    rx_line[i-1] = 0;
+    rxLineBuffer[i-1] = 0;
 }
 
 
 // Interrupt Routine to read in data from serial port
-void Rx_interrupt() {
+void interruptRx() {
 
     // null check
     if(serial == NULL) {
@@ -361,18 +432,18 @@ void Rx_interrupt() {
 
     // Loop just in case more than one character is in UART's receive FIFO buffer
     // Stop if buffer full
-    while ((serial->readable()) && (((rx_in + 1) % buffer_size) != rx_out)) {
-        rx_buffer[rx_in] = serial->getc();
+    while ((serial->readable()) && (((rxInPointer + 1) % serialBufferSize) != rxOutPointer)) {
+        rxBuffer[rxInPointer] = serial->getc();
 
         // Uncomment to Echo to USB serial to watch data flow
-        serial->putc(rx_buffer[rx_in]); // echo back MEMO: DEBUG ONLY
-        rx_in = (rx_in + 1) % buffer_size;
+        //serial->putc(rxBuffer[rxInPointer]); // echo back
+        rxInPointer = (rxInPointer + 1) % serialBufferSize;
     }
 }
 
 
 // Interrupt Routine to write out data to serial port
-void Tx_interrupt() {
+void interruptTx() {
 
     // null check
     if(serial == NULL) {
@@ -380,9 +451,9 @@ void Tx_interrupt() {
     }
     // Loop to fill more than one character in UART's transmit FIFO buffer
     // Stop if buffer empty
-    while ((serial->writeable()) && (tx_in != tx_out)) {
-        serial->putc(tx_buffer[tx_out]);
-        tx_out = (tx_out + 1) % buffer_size;
+    while ((serial->writeable()) && (txInPointer != txOutPointer)) {
+        serial->putc(txBuffer[txOutPointer]);
+        txOutPointer = (txOutPointer + 1) % serialBufferSize;
     }
 }
 
@@ -390,7 +461,28 @@ void Tx_interrupt() {
  * SRAM
  */
 
-void dumpAll() {
+void dumpMemory() {
+
+    static const uint8_t bufferLength = 16;
+    char *buffer = new char[bufferLength];
+
+    for(uint16_t address=0x0000; address<0x0800; address+=bufferLength) {
+
+        // Seq. Read
+        sram->read(address, buffer, bufferLength);
+
+        for(uint8_t i=0; i<bufferLength; i++) {
+            serial->putc(buffer[i]);
+        }
+    }
+
+    delete[] buffer;
+}
+
+/**
+ * dump all data stored in 47L16 (2048byte)
+ */
+void dumpMemoryReadable() {
 
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
@@ -412,7 +504,71 @@ void dumpAll() {
     delete[] buffer;
 }
 
-void dumpConfig() {
+void getStatus() {
+
+    char statusByte = 0x00;
+
+    // Read single byte at 0x0000
+    sram->read(0x0000, &statusByte);
+
+    serial->putc(statusByte);
+}
+
+void getStatusReadable() {
+
+    char statusByte;
+
+    // Seq. Read
+    sram->read(0x0000, &statusByte);
+
+    serial->printf("\nSV ST SK DR OP GR NC NC\r");
+    serial->printf("\n-----------------------\r");
+    serial->printf("\n %d  %d  %d  %d  %d  %d  %d  %d\r"
+            , ((statusByte & 0x01) ? 1 : 0)
+            , ((statusByte & 0x02) ? 1 : 0)
+            , ((statusByte & 0x04) ? 1 : 0)
+            , ((statusByte & 0x08) ? 1 : 0)
+            , ((statusByte & 0x10) ? 1 : 0)
+            , ((statusByte & 0x20) ? 1 : 0)
+            , ((statusByte & 0x40) ? 1 : 0)
+            , ((statusByte & 0x80) ? 1 : 0)
+            );
+}
+
+void updateStatus(uint8_t newStatus) {
+
+    // update status var
+    config->statusFlags = newStatus;
+
+    // update sram
+    sram->write(0x0000, newStatus);
+}
+
+/*
+ * 設定値を返す
+ */
+void getConfig() {
+
+    static const uint8_t bufferLength = 16;
+    char *buffer = new char[bufferLength];
+
+    for(uint16_t address=0x0000; address<0x0020; address+=bufferLength) {
+
+        // Seq. Read
+        sram->read(address, buffer, bufferLength);
+
+        for(uint8_t i=0; i<bufferLength; i++) {
+            serial->putc(buffer[i]);
+        }
+    }
+
+    delete[] buffer;
+}
+
+/**
+ * 設定値をフォーマットして返す
+ */
+void getConfigReadable() {
 
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
@@ -437,6 +593,7 @@ void dumpConfig() {
 void resetConfig() {
 
     // getStandBy config with default value
+    config->statusFlags      = 0x00;
     config->pressureAt0m     = 0.0f;
     config->pressureAtGround = 0.0f;
     config->aboveTheSkyAt    = 30;
@@ -447,7 +604,6 @@ void resetConfig() {
     config->enableLogging    = 0x01;   // 0x01:true 0x00:false
     config->logStartTime     = 0x01020304;
     config->lastLogAddress   = 0x0020; // 0x0020-0x0800
-    config->statusFlags      = 0x01;
 
     // save onto SRAM
     sram->write(0x0000, (char*)config, CONFIG_MEMORY_AREA_SIZE);
@@ -458,17 +614,17 @@ void loadConfig() {
     char *buffer = new char[CONFIG_MEMORY_AREA_SIZE];
     sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // update 0x0000-0x0019
 
-    config->pressureAt0m     = (float) (buffer[3] >> 24 || buffer[2] >> 16 || buffer[1] >> 8 || buffer[0]);
-    config->pressureAtGround = (float) (buffer[7] >> 24 || buffer[6] >> 16 || buffer[5] >> 8 || buffer[4]);
-    config->aboveTheSkyAt    = (uint8_t) buffer[8];
-    config->openParachuteAt  = (uint8_t) buffer[9];
-    config->servoPeriod      = (float) (buffer[13] >> 24 || buffer[12] >> 16 || buffer[11] >> 8 || buffer[10]);
-    config->openServoDuty    = (float) (buffer[17] >> 24 || buffer[16] >> 16 || buffer[15] >> 8 || buffer[14]);
-    config->closeServoDuty   = (float) (buffer[21] >> 24 || buffer[20] >> 16 || buffer[19] >> 8 || buffer[18]);
-    config->enableLogging    = (uint8_t) buffer[22];
-    config->logStartTime     = (uint32_t) (buffer[26] >> 24 || buffer[25] >> 16 || buffer[24] >> 8 || buffer[23]);
-    config->lastLogAddress   = (uint16_t) (buffer[28] >> 8 || buffer[27]);
-    config->statusFlags      = (uint8_t) buffer[29];
+    config->statusFlags      = (uint8_t) buffer[0];
+    config->pressureAt0m     = (float) (buffer[4] >> 24 | buffer[3] >> 16 | buffer[2] >> 8 | buffer[1]);
+    config->pressureAtGround = (float) (buffer[8] >> 24 | buffer[7] >> 16 | buffer[6] >> 8 | buffer[5]);
+    config->aboveTheSkyAt    = (uint8_t) buffer[9];
+    config->openParachuteAt  = (uint8_t) buffer[10];
+    config->servoPeriod      = (float) (buffer[14] >> 24 | buffer[13] >> 16 | buffer[12] >> 8 | buffer[11]);
+    config->openServoDuty    = (float) (buffer[18] >> 24 | buffer[17] >> 16 | buffer[16] >> 8 | buffer[15]);
+    config->closeServoDuty   = (float) (buffer[22] >> 24 | buffer[21] >> 16 | buffer[20] >> 8 | buffer[19]);
+    config->enableLogging    = (uint8_t) buffer[23];
+    config->logStartTime     = (uint32_t) (buffer[27] >> 24 | buffer[26] >> 16 | buffer[25] >> 8 | buffer[24]);
+    config->lastLogAddress   = (uint16_t) (buffer[29] >> 8 | buffer[28]);
 }
 
 /**
@@ -523,17 +679,23 @@ static uint8_t stopSensor()
     return RESULT_OK;
 }
 
-//
-void dumpSensorValues() {
+void getSensorValues() {
     if(sensorManager != NULL) {
 
         sensorManager->updateForced();
-        serial->printf("\r\n----------------------");
-        serial->printf("\r\n dumpSensorValues()");
-        serial->printf("\r\n----------------------");
-        serial->printf("\r\nPressure: %ld", (uint32_t)(sensorManager->currentPressure));
-        serial->printf("\r\nALT(x10): %ld", (uint32_t)x10(sensorManager->currentAltitude));
-        serial->printf("\r\nTMP(x10): %ld", (uint32_t)x10(sensorManager->currentTemperature));
+
+        //TODO: 書く
+    }
+}
+
+void getSensorValuesReadable() {
+    if(sensorManager != NULL) {
+
+        sensorManager->updateForced();
+
+        serial->printf("\nPressure: %d\r", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
+        serial->printf("\nALT(x10): %d\r", (uint16_t)x10(sensorManager->currentAltitude));
+        serial->printf("\nTMP(x10): %d\r", (uint16_t)x10(sensorManager->currentTemperature));
     }
 }
 
