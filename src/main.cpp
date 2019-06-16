@@ -1,3 +1,5 @@
+#define DEBUG
+
 /**
  * 最新の気圧情報（岩見沢）
  * https://www.jma.go.jp/jp/amedas_h/today-15356.html?areaCode=000&groupCode=13
@@ -40,6 +42,12 @@ enum RESULTS {
  */
 RawSerial *serial;
 
+
+#ifdef DEBUG
+#define DEBUG_PRINT(x)  serial.printf(x)
+#else
+#define DEBUG_PRINT(x)
+#endif
 /**
  * Servo Manager
  */
