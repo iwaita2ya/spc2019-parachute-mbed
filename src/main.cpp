@@ -19,13 +19,6 @@
 
 using namespace greysound;
 
-/**
- * flags
- */
-uint8_t shouldLoop;
-uint8_t currentState;
-uint8_t enableSerial = 1;
-
 // 状態管理
 enum MCUState {
     STAND_BY,   // 準備完了
@@ -40,6 +33,16 @@ enum RESULTS {
     RESULT_NG = 1
 };
 
+enum SERIAL_OUT {
+    ENABLE_SERIAL = 0,
+    DISABLE_SERIAL = 1
+};
+
+/**
+ * flags
+ */
+uint8_t shouldLoop;
+uint8_t currentState; //TODO: config->statusFlags に置き換える
 
 /**
  * Serial Port
@@ -66,7 +69,7 @@ char txLineBuffer[80];
 char rxLineBuffer[80];
 
 #ifdef DEBUG
-#define DEBUG_PRINT(x)  serial.printf(x)
+#define DEBUG_PRINT(x)  serial->printf(x)
 #else
 #define DEBUG_PRINT(x)
 #endif
@@ -93,6 +96,10 @@ InterruptIn *servoControlPin;   // パラシュートロック／アンロック
  */
 DigitalOut *led; // LED
 
+/**
+ * Jumper
+ */
+DigitalIn *enableSerial;
 
 /**
  * SRAM
@@ -172,6 +179,10 @@ int main() {
     // set active flag
     shouldLoop = 1;
 
+    // set Serial Enable/Disable
+    enableSerial = new DigitalIn(P1_15);
+    enableSerial->mode(PullUp);
+
     // getStandBy serial baud rate
     serial = new RawSerial(P0_19, P0_18); // tx, rx
     serial->baud(115200); // default:9600bps
@@ -184,12 +195,6 @@ int main() {
     config = new SystemArea();
     loadConfig(); //TODO: 値の妥当性を検証する
 
-    //-----------
-    // SRAM TEST //MEMO: まだ途中
-    //-----------
-    //resetConfig(); // reset config with default value
-    //getConfigReadable();
-
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
     servoManager->setRange(0.03f, 0.037f); // minValue, maxValue
@@ -201,13 +206,8 @@ int main() {
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
     sensorManager->getStandBy(); //reset altitude, reset counter, then set as STAND_BY
 
-    //-----------
-    // SENSOR TEST
-    //-----------
-    //getSensorValuesReadable();
-
     // Set Altitude Button
-    setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン P0_20
+    setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
     setAltitudePin->fall(&setAltitude);
 
@@ -219,14 +219,22 @@ int main() {
     // Status LED
     led = new DigitalOut(P0_7);
 
-    // スタンバイ状態に遷移する
+    //FIXME: SRAMのステータス情報から判断する
     currentState = STAND_BY;
 
     /**
      * Main Loop
      */
     while(shouldLoop == 1) {
-        //TODO: ステータスに応じて処理を分岐させる
+
+        /**
+         * ステータスに応じて処理を分岐
+         * STAND_BY,   // 準備完了
+         * GET_START,  // 開始指示受信
+         * BUSY,       // 開始中
+         * GET_PAUSE,  // 一時停止
+         * ERROR       // エラー発生
+         */
         uint8_t result = 0;
         switch (currentState) {
 
@@ -267,8 +275,9 @@ int main() {
          * 0xB0 メモリダンプ (human readable)
          * 0xC0 センサ値取得
          * 0xD0 センサ値取得 (human readable)
+         * 0xE0 サーボ開閉
          */
-        if(enableSerial == 1) {
+        if(enableSerial->read() == ENABLE_SERIAL) {
 
             // data received and not read yet?
             if (rxInPointer != rxOutPointer) {
@@ -315,6 +324,9 @@ int main() {
                         break;
                     case 0xD0: // センサ値取得（フォーマット済）
                         getSensorValuesReadable();
+                        break;
+                    case 0xE0: // サーボ開閉
+                        changeServoState();
                         break;
                     default:
                         break;
@@ -706,24 +718,33 @@ void getSensorValuesReadable() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
-    serial->printf("\r\nchangeServoState()");
-    static uint8_t currentState = 0;
+    DEBUG_PRINT("\nchangeServoState()\r");
 
     if(servoManager != NULL)
     {
-        if (currentState == 1) {
-            servoManager->moveRight();  // lock
+        if (config->statusFlags & 0x01) {
+
+            // release (1->0)
+            servoManager->moveLeft();
+
+            // clear flag
+            updateStatus(config->statusFlags & 0xFE);
         } else {
-            servoManager->moveLeft();   // release
+
+            // lock (0->1)
+            servoManager->moveRight();
+
+            // set flag
+            updateStatus(config->statusFlags | 0x01);
         }
-        currentState = static_cast<uint8_t>(1 - currentState);
     }
 }
 
 // 地上の高度をセットする
 static void setAltitude()
 {
-    serial->printf("\r\nsetAltitude()");
+    DEBUG_PRINT("\nsetAltitude()\r");
+
     if(sensorManager != NULL)
     {
         // 地表高度設定
