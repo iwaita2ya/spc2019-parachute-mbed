@@ -7,6 +7,7 @@
  * --- 札幌 ---
  * https://www.jma.go.jp/jp/amedas_h/today-14163.html?areaCode=000&groupCode=12
  */
+
 #include <mbed.h>
 #include "MS5607I2C.h"
 #include "SerialSRAM.h"
@@ -21,11 +22,14 @@ using namespace greysound;
 
 // 状態管理
 enum MCUState {
-    STAND_BY,   // 準備完了
-    GET_START,  // 開始指示受信
-    BUSY,       // 開始中
-    GET_PAUSE,  // 一時停止
-    ERROR       // エラー発生
+    INIT       = 0x01,
+    STAND_BY   = 0x02,
+    FLYING     = 0x04,
+    FALLING    = 0x08,
+    OPEN_PARA  = 0x10,
+    TOUCH_DOWN = 0x20,
+    FINISH     = 0x40,
+    ERROR      = 0x80
 };
 
 enum RESULTS {
@@ -42,7 +46,6 @@ enum SERIAL_OUT {
  * flags
  */
 uint8_t shouldLoop;
-uint8_t currentState; //TODO: config->statusFlags に置き換える
 
 /**
  * Serial Port
@@ -219,9 +222,6 @@ int main() {
     // Status LED
     led = new DigitalOut(P0_7);
 
-    //FIXME: SRAMのステータス情報から判断する
-    currentState = STAND_BY;
-
     /**
      * Main Loop
      */
@@ -229,33 +229,59 @@ int main() {
 
         /**
          * ステータスに応じて処理を分岐
-         * STAND_BY,   // 準備完了
-         * GET_START,  // 開始指示受信
-         * BUSY,       // 開始中
-         * GET_PAUSE,  // 一時停止
-         * ERROR       // エラー発生
+         * ステータスフラグはINITから順番に立てられる（クリアされない）ので、
+         * FINISHから順に判定する
+         * INIT       = 0x01,
+         * STAND_BY   = 0x02,
+         * FLYING     = 0x04,
+         * FALLING    = 0x08,
+         * OPEN_PARA  = 0x10,
+         * TOUCH_DOWN = 0x20,
+         * FINISH     = 0x40,
+         * ERROR      = 0xFF  // エラー発生
          */
-        uint8_t result = 0;
-        switch (currentState) {
+        if(config->statusFlags & FINISH) {
+            //TODO: シリアル通信を無条件で許可する
+        }
+        else if(config->statusFlags & TOUCH_DOWN) { // 着地
+            //TODO: システム停止
+            if(stopSensor() == RESULT_OK) {
+                updateStatus(config->statusFlags | FINISH);
+            }
+        }
+        else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
+            // パラシュート開放
+            servoManager->moveLeft();
 
-            case GET_START:
-                result = startSensor();
-                // 開始成功なら BUSY 状態に遷移
-                if(result == RESULT_OK) {
-                    currentState = BUSY;
-                }
-                break;
+            //TODO: 高度低下が停止したら TOUCH_DOWN に遷移
+            updateStatus(config->statusFlags | TOUCH_DOWN);
+        }
+        else if(config->statusFlags & FALLING) { // 落下中
 
-            case GET_PAUSE:
-                result = stopSensor();
-                // 停止成功なら STAND_BY 状態に遷移
-                if(result == RESULT_OK) {
-                    currentState = STAND_BY;
-                }
-                break;
+            // 開放高度に達したら OPEN_PARA に遷移
+            if(sensorManager->isOkToDeployParachute()) {
+                updateStatus(config->statusFlags | OPEN_PARA);
+            }
+        }
+        else if(config->statusFlags & FLYING) { // 飛行中
+            //TODO: ロギング開始
 
-            default:
-                break;
+            //高度が減少に転じたら FALLING に遷移
+            if(sensorManager->isFalling()) {
+                updateStatus(config->statusFlags | FALLING);
+            }
+        }
+        else if(config->statusFlags & STAND_BY) { //
+            // 規定高度に達したら FLYING に遷移
+            if(sensorManager->isFlying()) {
+                updateStatus(config->statusFlags | FLYING);
+            }
+        }
+        else if(config->statusFlags & INIT) {
+            // センサ開始したら STAND_BY に遷移
+            if(startSensor() == RESULT_OK) {
+                updateStatus(config->statusFlags | STAND_BY);
+            }
         }
 
         /**
@@ -335,7 +361,10 @@ int main() {
         }
 
         // blink LED
-        led->write(!(led->read())); // reverse value
+        for (uint8_t loop=0; loop <= config->statusFlags; loop++) {
+            led->write(!(led->read())); // reverse value
+            wait(0.25);
+        }
         wait(0.5);
     }
 
@@ -528,12 +557,12 @@ void getStatus() {
 
 void getStatusReadable() {
 
-    char statusByte;
+    char statusByte = config->statusFlags;
 
-    // Seq. Read
-    sram->read(0x0000, &statusByte);
+//    // Seq. Read
+//    sram->read(0x0000, &statusByte);
 
-    serial->printf("\nSV ST SK DR OP GR NC NC\r");
+    serial->printf("\nIN ST FL FA OP TD FN ER\r");
     serial->printf("\n-----------------------\r");
     serial->printf("\n %d  %d  %d  %d  %d  %d  %d  %d\r"
             , ((statusByte & 0x01) ? 1 : 0)
@@ -585,6 +614,7 @@ void getConfigReadable() {
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
 
+    // format in hex
     serial->printf("\r\nADDR 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\r\n");
     serial->printf("----------------------------------------------------\r\n");
 
@@ -598,6 +628,9 @@ void getConfigReadable() {
         }
         serial->printf("\r\n");
     }
+
+    // format in each value
+
 
     delete[] buffer;
 }
@@ -621,7 +654,7 @@ void resetConfig() {
     sram->write(0x0000, (char*)config, CONFIG_MEMORY_AREA_SIZE);
 }
 
-void loadConfig() {
+void loadConfig() { //TODO: ちゃんと動いているかチェックする
 
     char *buffer = new char[CONFIG_MEMORY_AREA_SIZE];
     sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // update 0x0000-0x0019

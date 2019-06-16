@@ -25,9 +25,11 @@ namespace greysound {
         float currentAltitude;      // 現在の高度
         float currentTemperature;   // 現在の気温
         float groundAltitude;       // 地表高度
-        float deemFlyingAltitude;   // 飛行中とみなす高度（＝飛行高度）
+        float flyingAltitude;       // 飛行中とみなす高度（＝飛行高度）
+        float maxAltitude;          // 最大到達高度
         float deployAltitude;       // パラシュート開放高度
-        uint8_t deemFlyingAltitudeCounter; // 飛行高度到達カウンタ
+        uint8_t flyingAltitudeCounter; // 飛行高度到達カウンタ
+        uint8_t fallingAltitudeCounter; // 落下検知カウンタ
         uint8_t deployAltitudeCounter; // パラシュート開放高度到達カウンタ
 
         // センサの状態管理
@@ -55,14 +57,18 @@ namespace greysound {
             // 変数初期化
             currentPressure = 0.0f;
             currentAltitude = 0.0f;
-            deemFlyingAltitude = 0.0f;
+            currentTemperature = 0.0f;
+            groundAltitude = 0.0f;
+            flyingAltitude = 0.0f;
+            maxAltitude    = 0.0f;
             deployAltitude = 0.0f;
 
             // カウンタリセット
             //resetCounters();
             activeTimeMs = 0;
-            deemFlyingAltitudeCounter = 0;
-            deployAltitudeCounter = 0;
+            flyingAltitudeCounter  = 0;
+            fallingAltitudeCounter = 0;
+            deployAltitudeCounter  = 0;
 
             // CREATED 状態に遷移
             currentState = CREATED;
@@ -82,6 +88,7 @@ namespace greysound {
 
         /**
          * データ取得のための準備を行う
+         * //FIXME: 飛行中の電源喪失を想定して書き直す(設定値をSRAMから読み出す)
          */
         uint8_t getStandBy()
         {
@@ -116,6 +123,7 @@ namespace greysound {
             //TODO: 以下の処理で問題が発生した場合は 1 を返す
 
             // 現在高度をサンプリングする
+            //FIXME: サンプリングせずにSRAM経由で即設定するロジックを追加する
             for (uint8_t i = 0; i<numberOfSamples; i++) {
                 groundAltitudeSamples += ms5607->getAltitude();
             }
@@ -124,10 +132,10 @@ namespace greysound {
             groundAltitude = (groundAltitudeSamples / numberOfSamples);
 
             // 飛行中とみなす高度を設定する
-            deemFlyingAltitude = groundAltitude+ DEEM_FLYING_AT; //TODO: DEEM_FLYING_AT を廃止して変数を使用する
+            flyingAltitude = groundAltitude + DEEM_FLYING_AT; //TODO: DEEM_FLYING_AT を廃止してSRAMを使用する
 
             // パラシュート開放高度を設定する
-            deployAltitude = groundAltitude+ DEPLOY_PARACHUTE_AT; //TODO: DEPLOY_PARACHUTE_AT を廃止して変数を使用する
+            deployAltitude = groundAltitude + DEPLOY_PARACHUTE_AT; //TODO: DEPLOY_PARACHUTE_AT を廃止してSRAMを使用する
 
             return 0;
         }
@@ -187,13 +195,23 @@ namespace greysound {
             // 現在高度を取得
             currentAltitude = ms5607->getAltitude();
 
-            // 現在高度が飛行高度を上回っている場合はカウントアップ
-            if(currentAltitude > deemFlyingAltitude && deemFlyingAltitudeCounter < POINT_THRESHOLD) {
-                deemFlyingAltitudeCounter++;
+            // 現在高度が最大到達高度を上回っていたら更新
+            if (currentAltitude > maxAltitude) {
+                maxAltitude = currentAltitude;
             }
 
-            // 飛行状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
-            if( isFlying() && currentAltitude < deployAltitude && deployAltitudeCounter < POINT_THRESHOLD) {
+            // 飛行状態チェック：現在高度が飛行高度を上回っている場合はカウントアップ
+            if(currentAltitude > flyingAltitude && flyingAltitudeCounter < POINT_THRESHOLD) {
+                flyingAltitudeCounter++;
+            }
+
+            // 落下状態チェック：最大到達高度より 2.0m 以上降下していたらカウントアップ
+            if((currentAltitude + 2.0f) < maxAltitude &&  fallingAltitudeCounter < POINT_THRESHOLD) {
+                fallingAltitudeCounter++;
+            }
+
+            // パラシュート開放チェック：飛行状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
+            if(isFalling() && currentAltitude < deployAltitude && deployAltitudeCounter < POINT_THRESHOLD) {
                 deployAltitudeCounter++;
             }
 
@@ -227,7 +245,16 @@ namespace greysound {
          */
         bool isFlying()
         {
-            return (deemFlyingAltitudeCounter >= POINT_THRESHOLD);
+            return (flyingAltitudeCounter >= POINT_THRESHOLD);
+        }
+
+        /**
+         * 落下状態か？（最大到達高度を下回っているか？）
+         * @return
+         */
+        bool isFalling()
+        {
+            return (fallingAltitudeCounter >= POINT_THRESHOLD);
         }
 
         /**
@@ -259,8 +286,9 @@ namespace greysound {
          */
         void resetCounters() {
             activeTimeMs = 0;
-            deemFlyingAltitudeCounter = 0;
-            deployAltitudeCounter = 0;
+            flyingAltitudeCounter  = 0;
+            fallingAltitudeCounter = 0;
+            deployAltitudeCounter  = 0;
         }
 
     };
