@@ -43,11 +43,30 @@ enum RESULTS {
 RawSerial *serial;
 
 
+// Circular buffers for serial TX and RX data - used by interrupt routines
+const int buffer_size = 255;
+
+// might need to increase buffer size for high baud rates
+char tx_buffer[buffer_size+1];
+char rx_buffer[buffer_size+1];
+
+// Circular buffer pointers
+// volatile makes read-modify-write atomic
+volatile int tx_in=0;
+volatile int tx_out=0;
+volatile int rx_in=0;
+volatile int rx_out=0;
+
+// Line buffers for sprintf and sscanf
+char tx_line[80];
+char rx_line[80];
+
 #ifdef DEBUG
 #define DEBUG_PRINT(x)  serial.printf(x)
 #else
 #define DEBUG_PRINT(x)
 #endif
+
 /**
  * Servo Manager
  */
@@ -106,6 +125,13 @@ struct SystemArea {
 SystemArea *config; // 設定情報を格納する
 
 // Function Prototypes --------------------------------------------------------
+
+// ----- Serial -----
+void Tx_interrupt();
+void Rx_interrupt();
+void send_line();
+void read_line();
+
 // ----- SRAM -----
 void dumpAll();                         // dump all data in SRAM
 void dumpConfig();                      // dump config memory area in SRAM
@@ -130,6 +156,7 @@ int32_t x10(float);
 
 // Main  ----------------------------------------------------------------------
 int main() {
+
     /**
      * Init Objects/Vars
      */
@@ -139,6 +166,9 @@ int main() {
     // getStandBy serial baud rate
     serial = new RawSerial(P0_19, P0_18); // tx, rx
     serial->baud(115200); // default:9600bps
+    // set interrupts for Tx/Rx
+    serial->attach(&Rx_interrupt, Serial::RxIrq);
+    serial->attach(&Tx_interrupt, Serial::TxIrq);
 
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
@@ -148,10 +178,8 @@ int main() {
     //-----------
     // SRAM TEST //MEMO: まだ途中
     //-----------
-//    // reset config with default value
-//    resetConfig();
-//    // dump config
-//    dumpConfig();
+//    resetConfig(); // reset config with default value
+    dumpConfig();
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -169,15 +197,15 @@ int main() {
     //-----------
     dumpSensorValues();
 
-    // Servo Open/Close Buttons
-    servoControlPin = new InterruptIn(P0_20);// サーボ操作ボタン
-    servoControlPin->mode(PullUp);
-    servoControlPin->fall(&changeServoState);
-
     // Set Altitude Button
-    setAltitudePin = new InterruptIn(P1_19); // 地表高度設定ボタン
+    setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン P0_20
     setAltitudePin->mode(PullUp);
     setAltitudePin->fall(&setAltitude);
+
+    // Servo Open/Close Buttons
+    servoControlPin = new InterruptIn(P1_19);// サーボ操作ボタン
+    servoControlPin->mode(PullUp);
+    servoControlPin->fall(&changeServoState);
 
     // Status LED
     led = new DigitalOut(P0_7);
@@ -236,6 +264,128 @@ int main() {
 }
 
 // Functions  -----------------------------------------------------------------
+/**
+ * Serial
+ */
+
+// Copy tx line buffer to large tx buffer for tx interrupt routine
+void send_line() {
+
+    // null check
+    if(serial == NULL) {
+        return;
+    }
+
+    int i;
+    char temp_char;
+    bool empty;
+    i = 0;
+
+    // Start Critical Section - don't interrupt while changing global buffer variables
+    NVIC_DisableIRQ(UART_IRQn);
+    empty = (tx_in == tx_out);
+
+    while ((i==0) || (tx_line[i-1] != '\n')) {
+        // Wait if buffer full
+        if (((tx_in + 1) % buffer_size) == tx_out) {
+
+            // End Critical Section - need to let interrupt routine empty buffer by sending
+            NVIC_EnableIRQ(UART_IRQn);
+            while (((tx_in + 1) % buffer_size) == tx_out) {
+            }
+
+            // Start Critical Section - don't interrupt while changing global buffer variables
+            NVIC_DisableIRQ(UART_IRQn);
+        }
+
+        tx_buffer[tx_in] = tx_line[i];
+        i++;
+        tx_in = (tx_in + 1) % buffer_size;
+    }
+    if (serial->writeable() && (empty)) {
+        temp_char = tx_buffer[tx_out];
+        tx_out = (tx_out + 1) % buffer_size;
+        // Send first character to start tx interrupts, if stopped
+        serial->putc(temp_char);
+    }
+    // End Critical Section
+    NVIC_EnableIRQ(UART_IRQn);
+}
+
+
+// Read a line from the large rx buffer from rx interrupt routine
+void read_line() {
+
+    // null check
+    if(serial == NULL) {
+        return;
+    }
+
+    int i;
+    i = 0;
+    // Start Critical Section - don't interrupt while changing global buffer variables
+    NVIC_DisableIRQ(UART_IRQn);
+
+    // Loop reading rx buffer characters until end of line character
+    while ((i==0) || (rx_line[i-1] != '\r')) {
+
+        // Wait if buffer empty
+        if (rx_in == rx_out) {
+
+            // End Critical Section - need to allow rx interrupt to get new characters for buffer
+            NVIC_EnableIRQ(UART_IRQn);
+            while (rx_in == rx_out) {
+            }
+
+            // Start Critical Section - don't interrupt while changing global buffer variables
+            NVIC_DisableIRQ(UART_IRQn);
+        }
+        rx_line[i] = rx_buffer[rx_out];
+        i++;
+        rx_out = (rx_out + 1) % buffer_size;
+    }
+
+    // End Critical Section
+    NVIC_EnableIRQ(UART_IRQn);
+    rx_line[i-1] = 0;
+}
+
+
+// Interrupt Routine to read in data from serial port
+void Rx_interrupt() {
+
+    // null check
+    if(serial == NULL) {
+        return;
+    }
+
+    // Loop just in case more than one character is in UART's receive FIFO buffer
+    // Stop if buffer full
+    while ((serial->readable()) && (((rx_in + 1) % buffer_size) != rx_out)) {
+        rx_buffer[rx_in] = serial->getc();
+
+        // Uncomment to Echo to USB serial to watch data flow
+        serial->putc(rx_buffer[rx_in]); // echo back MEMO: DEBUG ONLY
+        rx_in = (rx_in + 1) % buffer_size;
+    }
+}
+
+
+// Interrupt Routine to write out data to serial port
+void Tx_interrupt() {
+
+    // null check
+    if(serial == NULL) {
+        return;
+    }
+    // Loop to fill more than one character in UART's transmit FIFO buffer
+    // Stop if buffer empty
+    while ((serial->writeable()) && (tx_in != tx_out)) {
+        serial->putc(tx_buffer[tx_out]);
+        tx_out = (tx_out + 1) % buffer_size;
+    }
+}
+
 /**
  * SRAM
  */
@@ -376,6 +526,7 @@ static uint8_t stopSensor()
 //
 void dumpSensorValues() {
     if(sensorManager != NULL) {
+
         sensorManager->updateForced();
         serial->printf("\r\n----------------------");
         serial->printf("\r\n dumpSensorValues()");
@@ -393,6 +544,7 @@ void dumpSensorValues() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
+    serial->printf("\r\nchangeServoState()");
     static uint8_t currentState = 0;
 
     if(servoManager != NULL)
@@ -409,6 +561,7 @@ static void changeServoState()
 // 地上の高度をセットする
 static void setAltitude()
 {
+    serial->printf("\r\nsetAltitude()");
     if(sensorManager != NULL)
     {
         // 地表高度設定
