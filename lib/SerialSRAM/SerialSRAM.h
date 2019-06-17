@@ -1,5 +1,5 @@
 //
-// Created by iwait on 4/8/19.
+// Created by Tatsuya Iwai (GreySound) on 4/8/19.
 //
 
 #ifndef GS_SERIAL_SRAM_H

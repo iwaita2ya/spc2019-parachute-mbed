@@ -1,5 +1,5 @@
 //
-// Created by iwait on 4/8/19.
+// Created by Tatsuya Iwai (GreySound) on 4/8/19.
 //
 #include <stdint.h>
 #include "SerialSRAM.h"

@@ -1,5 +1,5 @@
 //
-// Created by iwait on 6/7/19.
+// Created by Tatsuya Iwai (GreySound) on 6/7/19.
 //
 
 #ifndef SPC2019_PARACHUTE_MBED_SENSORMANAGER_H
