@@ -9,12 +9,12 @@
  */
 
 #include <mbed.h>
+#include "SystemParameters.h"
 #include "MS5607I2C.h"
 #include "SerialSRAM.h"
 #include "ServoManager.h"
 #include "SensorManager.h"
 
-#define BUFFER_SIZE 16
 #define CONFIG_MEMORY_AREA_SIZE 30
 #define SENSOR_UPDATE_FREQ 0.1
 
@@ -122,20 +122,7 @@ DigitalIn *enableSerial;
  */
 SerialSRAM *sram;
 
-struct SystemArea {
-    uint8_t statusFlags;
-    float pressureAt0m;
-    float pressureAtGround;
-    uint8_t aboveTheSkyAt;
-    uint8_t openParachuteAt;
-    float servoPeriod;
-    float openServoDuty;
-    float closeServoDuty;
-    uint8_t enableLogging;
-    time_t logStartTime;
-    uint16_t lastLogAddress;
-};
-SystemArea *config; // 設定情報を格納する
+SystemParameters *config; // 設定情報を格納する
 
 // Function Prototypes --------------------------------------------------------
 
@@ -195,19 +182,20 @@ int main() {
 
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
-    config = new SystemArea();
+    config = new SystemParameters();
     loadConfig(); //TODO: 値の妥当性を検証する
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
+    servoManager->setPeriod(config->servoPeriod);
     servoManager->setRange(0.03f, 0.037f); // minValue, maxValue
+    servoManager->setRange(config->closeServoDuty, config->openServoDuty);
     servoManager->init();
     servoManager->moveRight(); // open
 
     // getStandBy SensorManager (and Ticker)
     sensorTicker  = new Ticker();
-    sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C); // sda, scl, agAddr, mAddr
-    sensorManager->getStandBy(); //reset altitude, reset counter, then set as STAND_BY
+    sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
 
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
@@ -240,11 +228,8 @@ int main() {
          * FINISH     = 0x40,
          * ERROR      = 0xFF  // エラー発生
          */
-        if(config->statusFlags & FINISH) {
-            //TODO: シリアル通信を無条件で許可する
-        }
-        else if(config->statusFlags & TOUCH_DOWN) { // 着地
-            //TODO: システム停止
+        if(config->statusFlags & TOUCH_DOWN) { // 着地
+            // システム停止
             if(stopSensor() == RESULT_OK) {
                 updateStatus(config->statusFlags | FINISH);
             }
@@ -253,8 +238,10 @@ int main() {
             // パラシュート開放
             servoManager->moveLeft();
 
-            //TODO: 高度低下が停止したら TOUCH_DOWN に遷移
-            updateStatus(config->statusFlags | TOUCH_DOWN);
+            // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
+            if(sensorManager->isTouchDown()) {
+                updateStatus(config->statusFlags | TOUCH_DOWN);
+            }
         }
         else if(config->statusFlags & FALLING) { // 落下中
 
@@ -303,7 +290,7 @@ int main() {
          * 0xD0 センサ値取得 (human readable)
          * 0xE0 サーボ開閉
          */
-        if(enableSerial->read() == ENABLE_SERIAL) {
+        if(enableSerial->read() == ENABLE_SERIAL || config->statusFlags & FINISH) {
 
             // data received and not read yet?
             if (rxInPointer != rxOutPointer) {
@@ -638,17 +625,18 @@ void getConfigReadable() {
 void resetConfig() {
 
     // getStandBy config with default value
-    config->statusFlags      = 0x00;
-    config->pressureAt0m     = 0.0f;
-    config->pressureAtGround = 0.0f;
-    config->aboveTheSkyAt    = 30;
-    config->openParachuteAt  = 20;
-    config->servoPeriod      = 0.020f; // 20 ms
-    config->openServoDuty    = 0.120f; // 0-1.0f
-    config->closeServoDuty   = 0.025f; // 0-1.0f
-    config->enableLogging    = 0x01;   // 0x01:true 0x00:false
-    config->logStartTime     = 0x01020304;
-    config->lastLogAddress   = 0x0020; // 0x0020-0x0800
+    config->statusFlags         = 0x00;      // ステータスフラグ
+    config->pressureAtSeaLevel  = 100000.0f; // 海抜0mの大気圧
+    config->groundAltitude      = 34;        // 地表高度
+    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
+    config->altitudeThreshold   = 2;         // 状態遷移に必要な高度しきい値
+    config->deployParachuteAt   = 30;        // パラシュート開放高度(m)(地表高度に加算する)
+    config->servoPeriod         = 0.020f;    // 20 ms
+    config->openServoDuty       = 0.037f;    // 0-1.0f
+    config->closeServoDuty      = 0.03f;     // 0-1.0f
+    config->enableLogging       = 0x01;      // 0x01:true 0x00:false
+    config->logStartTime        = 0x01020304;
+    config->lastLogAddress      = 0x0020;    // 0x0020-0x0800
 
     // save onto SRAM
     sram->write(0x0000, (char*)config, CONFIG_MEMORY_AREA_SIZE);
@@ -659,17 +647,18 @@ void loadConfig() { //TODO: ちゃんと動いているかチェックする
     char *buffer = new char[CONFIG_MEMORY_AREA_SIZE];
     sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // update 0x0000-0x0019
 
-    config->statusFlags      = (uint8_t) buffer[0];
-    config->pressureAt0m     = (float) (buffer[4] >> 24 | buffer[3] >> 16 | buffer[2] >> 8 | buffer[1]);
-    config->pressureAtGround = (float) (buffer[8] >> 24 | buffer[7] >> 16 | buffer[6] >> 8 | buffer[5]);
-    config->aboveTheSkyAt    = (uint8_t) buffer[9];
-    config->openParachuteAt  = (uint8_t) buffer[10];
-    config->servoPeriod      = (float) (buffer[14] >> 24 | buffer[13] >> 16 | buffer[12] >> 8 | buffer[11]);
-    config->openServoDuty    = (float) (buffer[18] >> 24 | buffer[17] >> 16 | buffer[16] >> 8 | buffer[15]);
-    config->closeServoDuty   = (float) (buffer[22] >> 24 | buffer[21] >> 16 | buffer[20] >> 8 | buffer[19]);
-    config->enableLogging    = (uint8_t) buffer[23];
-    config->logStartTime     = (uint32_t) (buffer[27] >> 24 | buffer[26] >> 16 | buffer[25] >> 8 | buffer[24]);
-    config->lastLogAddress   = (uint16_t) (buffer[29] >> 8 | buffer[28]);
+    config->statusFlags         = (uint8_t) buffer[0];
+    config->pressureAtSeaLevel  = (float) (buffer[4] >> 24 | buffer[3] >> 16 | buffer[2] >> 8 | buffer[1]);
+    config->groundAltitude      = (uint8_t) buffer[5];
+    config->counterThreshold    = (uint8_t) buffer[6];
+    config->altitudeThreshold   = (uint8_t) buffer[7];
+    config->deployParachuteAt   = (uint8_t) buffer[8];
+    config->servoPeriod         = (float) (buffer[12] >> 24 | buffer[11] >> 16 | buffer[10] >> 8 | buffer[9]);
+    config->openServoDuty       = (float) (buffer[16] >> 24 | buffer[15] >> 16 | buffer[14] >> 8 | buffer[13]);
+    config->closeServoDuty      = (float) (buffer[20] >> 24 | buffer[19] >> 16 | buffer[18] >> 8 | buffer[17]);
+    config->enableLogging       = (uint8_t) buffer[21];
+    config->logStartTime        = (time_t) (buffer[25] >> 24 | buffer[24] >> 16 | buffer[23] >> 8 | buffer[22]);
+    config->lastLogAddress      = (uint16_t) (buffer[27] >> 8 | buffer[26]);
 }
 
 /**
@@ -695,7 +684,7 @@ static uint8_t startSensor()
 
     // センサ値更新処理開始
     if(sensorTicker) {
-        sensorTicker->attach(&updateSensor, SENSOR_UPDATE_FREQ); //MEMO: only :void can be attached
+        sensorTicker->attach(&updateSensor, SENSOR_UPDATE_FREQ); // only :void can be attached
     }
 
     return RESULT_OK;
@@ -781,7 +770,7 @@ static void setAltitude()
     if(sensorManager != NULL)
     {
         // 地表高度設定
-        sensorManager->updateAltitudesFromCurrentAltitude();
+        sensorManager->calculateGroundAltitude();
     }
 }
 

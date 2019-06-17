@@ -7,10 +7,7 @@
 
 #include <mbed.h>
 #include <MS5607I2C.h>
-
-#define POINT_THRESHOLD 3
-#define DEEM_FLYING_AT      35.0f   //飛行中とみなす高度(m)（地表高度に加算）
-#define DEPLOY_PARACHUTE_AT 30.0f   //パラシュート開放高度(m)（地表高度に加算）
+#include "SystemParameters.h"
 
 namespace greysound {
 
@@ -24,13 +21,15 @@ namespace greysound {
         float currentPressure;      // 現在の気圧
         float currentAltitude;      // 現在の高度
         float currentTemperature;   // 現在の気温
-        float groundAltitude;       // 地表高度
-        float flyingAltitude;       // 飛行中とみなす高度（＝飛行高度）
-        float maxAltitude;          // 最大到達高度
-        float deployAltitude;       // パラシュート開放高度
-        uint8_t flyingAltitudeCounter; // 飛行高度到達カウンタ
+        uint8_t maxAltitude;            // 最大到達高度
+        uint8_t altitudeThreshold;      // 状態遷移に必要な高度しきい値
+        uint8_t counterThreshold;       // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
+        uint8_t groundAltitude;         // 地表高度
+        uint8_t deployParachuteAt;      // パラシュート開放高度(m)（地表高度に加算）
+        uint8_t flyingAltitudeCounter;  // 飛行高度到達カウンタ
         uint8_t fallingAltitudeCounter; // 落下検知カウンタ
-        uint8_t deployAltitudeCounter; // パラシュート開放高度到達カウンタ
+        uint8_t deployAltitudeCounter;  // パラシュート開放高度到達カウンタ
+        uint8_t touchDownCounter;       // 着地判断カウンタ
 
         // センサの状態管理
         enum SensorState {
@@ -48,20 +47,23 @@ namespace greysound {
          * @param _agAddr
          * @param _mAddr
          */
-        SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr)
+        SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr, SystemParameters *params)
         {
             // インスタンス初期化
             ms5607  = new MS5607I2C(_sda, _scl, true); // sda, scl csb(1:0xEC 0:0xEE)
+            ms5607->setPressureAtSeaLevel(params->pressureAtSeaLevel);
+
             activeTimer = new Timer();
 
             // 変数初期化
             currentPressure = 0.0f;
             currentAltitude = 0.0f;
             currentTemperature = 0.0f;
-            groundAltitude = 0.0f;
-            flyingAltitude = 0.0f;
-            maxAltitude    = 0.0f;
-            deployAltitude = 0.0f;
+            maxAltitude = 0;
+            altitudeThreshold = params->altitudeThreshold;
+            counterThreshold  = params->counterThreshold;
+            groundAltitude    = params->groundAltitude;
+            deployParachuteAt = params->deployParachuteAt;
 
             // カウンタリセット
             //resetCounters();
@@ -69,6 +71,7 @@ namespace greysound {
             flyingAltitudeCounter  = 0;
             fallingAltitudeCounter = 0;
             deployAltitudeCounter  = 0;
+            touchDownCounter       = 0;
 
             // CREATED 状態に遷移
             currentState = CREATED;
@@ -87,55 +90,23 @@ namespace greysound {
         }
 
         /**
-         * データ取得のための準備を行う
-         * //FIXME: 飛行中の電源喪失を想定して書き直す(設定値をSRAMから読み出す)
-         */
-        uint8_t getStandBy()
-        {
-            uint8_t result;
-
-            // update ground altitude
-            result = updateAltitudesFromCurrentAltitude();
-
-            // error
-            if(result != 0) {
-                return 1;
-            }
-
-            // カウンタリセット
-            resetCounters();
-
-            // スタンバイ状態に遷移
-            currentState = STAND_BY;
-
-            return 0;
-        }
-
-        /**
-         * 現在の高度を地表高度として設定し、それを基に上空高度と開放高度を設定する
+         * 現在の高度を地表高度として設定し、それを基に開放高度を設定する
+         * MEMO: 機体が地上に設置されている状態で呼ばれる前提なので、飛行中の実行はNGです。
          * @return
          */
-        uint8_t updateAltitudesFromCurrentAltitude()
+        uint8_t calculateGroundAltitude()
         {
             const uint8_t numberOfSamples = 16;
             float groundAltitudeSamples = 0.0f;
 
-            //TODO: 以下の処理で問題が発生した場合は 1 を返す
-
             // 現在高度をサンプリングする
-            //FIXME: サンプリングせずにSRAM経由で即設定するロジックを追加する
             for (uint8_t i = 0; i<numberOfSamples; i++) {
                 groundAltitudeSamples += ms5607->getAltitude();
+                wait(0.1);
             }
 
             // 現在高度の平均値を地表高度として設定する
-            groundAltitude = (groundAltitudeSamples / numberOfSamples);
-
-            // 飛行中とみなす高度を設定する
-            flyingAltitude = groundAltitude + DEEM_FLYING_AT; //TODO: DEEM_FLYING_AT を廃止してSRAMを使用する
-
-            // パラシュート開放高度を設定する
-            deployAltitude = groundAltitude + DEPLOY_PARACHUTE_AT; //TODO: DEPLOY_PARACHUTE_AT を廃止してSRAMを使用する
+            groundAltitude = (uint8_t)(groundAltitudeSamples / numberOfSamples);
 
             return 0;
         }
@@ -150,7 +121,7 @@ namespace greysound {
                     result = this->getStandBy();
                     break;
 
-                case ACTIVE:
+                case ACTIVE: //MEMO: ACTIVEの場合は処理をしないほうが良い？（電源喪失時等を考慮して）
                 case BUSY:
                     this->end(); // 既に実行中の場合は一旦停止
                     break;
@@ -197,22 +168,27 @@ namespace greysound {
 
             // 現在高度が最大到達高度を上回っていたら更新
             if (currentAltitude > maxAltitude) {
-                maxAltitude = currentAltitude;
+                maxAltitude = (uint8_t) currentAltitude;
             }
 
-            // 飛行状態チェック：現在高度が飛行高度を上回っている場合はカウントアップ
-            if(currentAltitude > flyingAltitude && flyingAltitudeCounter < POINT_THRESHOLD) {
+            // 飛行状態チェック：現在高度が地上高度を 2.0m 以上上回っている場合はカウントアップ
+            if(currentAltitude > (groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
                 flyingAltitudeCounter++;
             }
 
             // 落下状態チェック：最大到達高度より 2.0m 以上降下していたらカウントアップ
-            if((currentAltitude + 2.0f) < maxAltitude &&  fallingAltitudeCounter < POINT_THRESHOLD) {
+            if((currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
                 fallingAltitudeCounter++;
             }
 
-            // パラシュート開放チェック：飛行状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
-            if(isFalling() && currentAltitude < deployAltitude && deployAltitudeCounter < POINT_THRESHOLD) {
+            // パラシュート開放チェック：落下状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
+            if(isFalling() && currentAltitude < (groundAltitude + deployParachuteAt) && deployAltitudeCounter < counterThreshold) {
                 deployAltitudeCounter++;
+            }
+
+            // 着地状態チェック：飛行状態で、現在高度が 地上高度+2.0m 以下の場合はカウントアップ
+            if(isFalling() && currentAltitude < (groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
+                touchDownCounter++;
             }
 
             // ACTIVE 状態に戻る
@@ -240,30 +216,39 @@ namespace greysound {
         }
 
         /**
-         * 飛行状態か？（＝飛行高度に達しているか？）
+         * 飛行状態か？
          * @return
          */
         bool isFlying()
         {
-            return (flyingAltitudeCounter >= POINT_THRESHOLD);
+            return (flyingAltitudeCounter >= counterThreshold);
         }
 
         /**
-         * 落下状態か？（最大到達高度を下回っているか？）
+         * 落下状態か？
          * @return
          */
         bool isFalling()
         {
-            return (fallingAltitudeCounter >= POINT_THRESHOLD);
+            return (fallingAltitudeCounter >= counterThreshold);
         }
 
         /**
-         * パラシュートを開放してもよい状態か？
+         * パラシュートを開放してもよいか？
          * @return
          */
         bool isOkToDeployParachute()
         {
-            return (deployAltitudeCounter >= POINT_THRESHOLD);
+            return (deployAltitudeCounter >= counterThreshold);
+        }
+
+        /**
+         * 着地状態か？
+         * @return
+         */
+        bool isTouchDown()
+        {
+            return (touchDownCounter >= counterThreshold);
         }
 
         /**
@@ -289,7 +274,24 @@ namespace greysound {
             flyingAltitudeCounter  = 0;
             fallingAltitudeCounter = 0;
             deployAltitudeCounter  = 0;
+            touchDownCounter       = 0;
         }
+
+        /**
+         * データ取得のための準備を行う
+         */
+        uint8_t getStandBy()
+        {
+
+            // カウンタリセット
+            resetCounters();
+
+            // スタンバイ状態に遷移
+            currentState = STAND_BY;
+
+            return 0;
+        }
+
 
     };
 

@@ -92,7 +92,7 @@ include_directories("${CMAKE_CURRENT_LIST_DIR}/mbed/e95d10626187")
 
 FILE(GLOB_RECURSE SRC_LIST "${CMAKE_CURRENT_LIST_DIR}/src/*.*" "${CMAKE_CURRENT_LIST_DIR}/lib/*.*")
 
-add_executable(spc2019-parachute-mbed ${CMAKE_CURRENT_LIST_DIR}/src/main.cpp mbed_config.h src/ServoManager.cpp src/ServoManager.h src/SensorManager.cpp src/SensorManager.h)
+add_executable(spc2019-parachute-mbed ${CMAKE_CURRENT_LIST_DIR}/src/main.cpp mbed_config.h src/ServoManager.cpp src/ServoManager.h src/SensorManager.cpp src/SensorManager.h src/SystemParameters.h)
 
 
 SET_TARGET_PROPERTIES(spc2019-parachute-mbed PROPERTIES ENABLE_EXPORTS 1)
