@@ -188,8 +188,7 @@ int main() {
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
     servoManager->setPeriod(config->servoPeriod);
-    servoManager->setRange(0.03f, 0.037f); // minValue, maxValue
-    servoManager->setRange(config->closeServoDuty, config->openServoDuty);
+    servoManager->setRange(config->closeServoDuty, config->openServoDuty); // minValue, maxValue
     servoManager->init();
     servoManager->moveRight(); // open
 
