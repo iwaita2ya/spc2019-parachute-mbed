@@ -133,13 +133,14 @@ void sendLine();
 void readLine();
 
 // ----- SRAM -----
-void getStatus();           // get config data from SRAM
-void getStatusReadable();   // get config data from SRAM (in readable format)
+void printStatus();           // get config data from SRAM
+void printStatusReadable();   // get config data from SRAM (in readable format)
 void updateStatus(uint8_t newStatus);
-void getConfig();           // get config data from SRAM
-void getConfigReadable();   // get config data from SRAM (in readable format)
-void resetConfig();         // reset config with default value;
+void printConfig();           // get config data from SRAM
+void printConfigReadable();   // get config data from SRAM (in readable format)
 void loadConfig();          // load config data from SRAM
+void saveConfig();
+void resetConfig();         // reset config with default value;
 void dumpMemory();          // dump all data in SRAM
 void dumpMemoryReadable();  // dump all data in SRAM (in readable format)
 void clearLog(uint16_t startAddress);   // clear logged data, not config
@@ -183,7 +184,7 @@ int main() {
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
     config = new SystemParameters();
-    loadConfig(); //TODO: 値の妥当性を検証する
+    loadConfig();
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -298,11 +299,11 @@ int main() {
                 char commandByte = rxLineBuffer[0];
 
                 switch (commandByte) {
-                    case 0x00: // ステータス取得
-                        getStatus();
+                    case 0x00: // ステータス表示 (hex)
+                        printStatus();
                         break;
-                    case 0x10: // ステータス取得（フォーマット済）
-                        getStatusReadable();
+                    case 0x10: // ステータス表示 (ascii)
+                        printStatusReadable();
                         break;
                     case 0x20: // ステータス更新
                         updateStatus(rxLineBuffer[1]);
@@ -310,11 +311,11 @@ int main() {
                     case 0x30: // ステータス初期化
                         updateStatus(0x00);
                         break;
-                    case 0x40: // 設定取得
-                        getConfig();
+                    case 0x40: // 設定表示 (hex)
+                        printConfig();
                         break;
-                    case 0x50: // 設定取得（フォーマット済）
-                        getConfigReadable();
+                    case 0x50: // 設定表示 (ascii)
+                        printConfigReadable();
                         break;
                     case 0x60: //TODO: 設定更新
                         break;
@@ -324,20 +325,23 @@ int main() {
                     case 0x71: // 設定をSRAMから読み込む
                         loadConfig();
                         break;
+                    case 0x72: // 設定をSRAMに書き込む
+                        saveConfig();
+                        break;
                     case 0x80: //TODO: ログ取得
                         break;
                     case 0x90: //TODO: ログ初期化
                         break;
-                    case 0xA0: // メモリダンプ
+                    case 0xA0: // メモリダンプ　(hex)
                         dumpMemory();
                         break;
-                    case 0xB0: // メモリダンプ（フォーマット済）
+                    case 0xB0: // メモリダンプ　(ascii)
                         dumpMemoryReadable();
                         break;
-                    case 0xC0: //TODO: センサ値取得
+                    case 0xC0: //TODO: センサ値取得 (ascii)
                         getSensorValues();
                         break;
-                    case 0xD0: // センサ値取得（フォーマット済）
+                    case 0xD0: // センサ値取得 (ascii)
                         getSensorValuesReadable();
                         break;
                     case 0xE0: // サーボ開閉
@@ -537,7 +541,7 @@ void dumpMemoryReadable() {
     delete[] buffer;
 }
 
-void getStatus() {
+void printStatus() {
 
     char statusByte = 0x00;
 
@@ -547,7 +551,7 @@ void getStatus() {
     serial->putc(statusByte);
 }
 
-void getStatusReadable() {
+void printStatusReadable() {
 
     // read data from config
     char statusByte = config->statusFlags;
@@ -581,7 +585,7 @@ void updateStatus(uint8_t newStatus) {
 /*
  * 設定値を返す
  */
-void getConfig() {
+void printConfig() {
 
     char *buffer = new char[0x20];
 
@@ -598,7 +602,7 @@ void getConfig() {
 /**
  * 設定値をフォーマットして返す
  */
-void getConfigReadable() {
+void printConfigReadable() {
 
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
@@ -611,9 +615,9 @@ void getConfigReadable() {
         // Seq. Read
         sram->read(address, buffer, bufferLength);
 
-        serial->printf("%04x ", address);
+        serial->printf("%04X ", address);
         for(uint8_t i=0; i<bufferLength; i++) {
-            serial->printf("%02x ", buffer[i]);
+            serial->printf("%02X ", buffer[i]);
         }
         serial->printf("\r\n");
     }
@@ -621,61 +625,58 @@ void getConfigReadable() {
     // print each value
 
     // status flag
-    getStatusReadable();
+    printStatusReadable();
 
     // 海抜0mの大気圧
-    sprintf(txLineBuffer, "Pressure: %lu Pa\r\n", (uint32_t) config->pressureAtSeaLevel); //FIXME: 変な値が表示される
-    sendLine();
-
-    sprintf(txLineBuffer, "Ground Altitude: %d m\r\n", config->groundAltitude);
-    sendLine();
-
-    sprintf(txLineBuffer, "Counter Threshold: %d\r\n", config->counterThreshold);
-    sendLine();
-
-    sprintf(txLineBuffer, "Altitude Threshold: %d m\r\n", config->altitudeThreshold);
-    sendLine();
-
-    sprintf(txLineBuffer, "Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
-    sendLine();
-
-    sprintf(txLineBuffer, "Servo Period: %lu ms\r\n", ((uint32_t) config->servoPeriod) * 1000);
-    sendLine();
-
-    sprintf(txLineBuffer, "Open Servo Duty: %lu %%\r\n", (uint32_t) config->servoPeriod * 1000);
-    sendLine();
-
-    sprintf(txLineBuffer, "Close Servo Duty: %lu %%\r\n", (uint32_t) config->closeServoDuty * 1000);
-    sendLine();
-
-    sprintf(txLineBuffer, "Enable Logging: %d\r\n", config->enableLogging);
-    sendLine();
-
-    sprintf(txLineBuffer, "Start Logging at: %lu\r\n", (uint32_t) config->logStartTime);
-    sendLine();
-
-    sprintf(txLineBuffer, "LastLog Address: 0x%04X\r\n", config->lastLogAddress);
-    sendLine();
+    serial->printf("Pressure At Sea Lv : %d Pa\r\n", (uint32_t) config->pressureAtSeaLevel);
+    serial->printf("Ground Altitude    : %d m\r\n", config->groundAltitude);
+    serial->printf("Counter Threshold  : %d\r\n", config->counterThreshold);
+    serial->printf("Altitude Threshold : %d m\r\n", config->altitudeThreshold);
+    serial->printf("Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
+    serial->printf("Servo Period       : %d ms\r\n", (uint32_t) (config->servoPeriod * 1000));
+    serial->printf("Open Servo         : %d ms\r\n", (uint32_t) (config->servoPeriod * 1000));
+    serial->printf("Close Servo        : %d ms\r\n", (uint32_t) (config->closeServoDuty * 1000));
+    serial->printf("Enable Logging     : %d\r\n", config->enableLogging);
+    serial->printf("Last Logged at     : %d\r\n", (uint32_t) config->logStartTime);
+    serial->printf("Last Logged Address: 0x%04X\r\n", config->lastLogAddress);
 
     delete[] buffer;
 }
 
-void resetConfig() {
+/**
+ * SRAM から設定値を読み出す
+ */
+void loadConfig() {
 
-    // getStandBy config with default value
-    config->statusFlags         = 0x00;      // ステータスフラグ
-    config->pressureAtSeaLevel  = 100000.0f; // 海抜0mの大気圧
-    config->groundAltitude      = 34;        // 地表高度
-    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 2;         // 状態遷移に必要な高度しきい値
-    config->deployParachuteAt   = 30;        // パラシュート開放高度(m)(地表高度に加算する)
-    config->servoPeriod         = 0.020f;    // 20 ms
-    config->openServoDuty       = 0.037f;    // 0-1.0f
-    config->closeServoDuty      = 0.03f;     // 0-1.0f
-    config->enableLogging       = 0x01;      // 0x01:true 0x00:false
-    config->logStartTime        = 0x01020304;
-    config->lastLogAddress      = 0x0020;    // 0x0020-0x0800
+    uint32_t uint32Value;
+    char *buffer = new char[0x20];
 
+    sram->read(0x0000, (char*)buffer, 0x20); // read 0x0000-0x0020
+
+    config->statusFlags        = (uint8_t) buffer[0];
+    uint32Value = (buffer[4] << 24 | buffer[3] << 16 | buffer[2] << 8 | buffer[1]);
+    config->pressureAtSeaLevel = *(float*)&uint32Value;
+    config->groundAltitude     = (uint8_t) buffer[5];
+    config->counterThreshold   = (uint8_t) buffer[6];
+    config->altitudeThreshold  = (uint8_t) buffer[7];
+    config->deployParachuteAt  = (uint8_t) buffer[8];
+    uint32Value = (buffer[12] << 24 | buffer[11] << 16 | buffer[10] << 8 | buffer[9]);
+    config->servoPeriod        = *(float*)&uint32Value;
+    uint32Value = (buffer[16] << 24 | buffer[15] << 15 | buffer[14] << 8 | buffer[13]);
+    config->openServoDuty      = *(float*)&uint32Value;
+    uint32Value = (buffer[20] << 24 | buffer[19] << 16 | buffer[18] << 8 | buffer[17]);
+    config->closeServoDuty     = *(float*)&uint32Value;;
+    config->enableLogging      = (uint8_t) buffer[21];
+    config->logStartTime       = (time_t) (buffer[25] << 24 | buffer[24] << 16 | buffer[23] << 8 | buffer[22]); //TODO: 要検証
+    config->lastLogAddress     = (uint16_t) (buffer[26] << 8 | buffer[27]); //TODO: 要検証
+
+    delete[] buffer;
+}
+
+/**
+ * SRAM に設定値を書き出す
+ */
+void saveConfig() {
     // save onto SRAM
     char charValue[sizeof(float)];
     sram->write(0x0000, config->statusFlags);
@@ -698,23 +699,23 @@ void resetConfig() {
     sram->write(0x001B, charValue, sizeof(uint16_t));
 }
 
-void loadConfig() {
+void resetConfig() {
 
-    char *buffer = new char[0x20];
-    sram->read(0x0000, buffer, 0x20); // read 0x0000-0x0020
+    // getStandBy config with default value
+    config->statusFlags         = 0x00;      // ステータスフラグ
+    config->pressureAtSeaLevel  = 100000.0f; // 海抜0mの大気圧
+    config->groundAltitude      = 34;        // 地表高度
+    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
+    config->altitudeThreshold   = 2;         // 状態遷移に必要な高度しきい値
+    config->deployParachuteAt   = 30;        // パラシュート開放高度(m)(地表高度に加算する)
+    config->servoPeriod         = 0.020f;    // 20 ms
+    config->openServoDuty       = 0.037f;    // 0-1.0f
+    config->closeServoDuty      = 0.03f;     // 0-1.0f
+    config->enableLogging       = 0x01;      // 0x01:true 0x00:false
+    config->logStartTime        = 0x01020304;
+    config->lastLogAddress      = 0x0020;    // 0x0020-0x0800
 
-    config->statusFlags         = (uint8_t) buffer[0];
-    config->pressureAtSeaLevel  = *(float*)(buffer[4] << 24 | buffer[3] << 16 | buffer[2] << 8 | buffer[1]);
-    config->groundAltitude      = (uint8_t) buffer[5];
-    config->counterThreshold    = (uint8_t) buffer[6];
-    config->altitudeThreshold   = (uint8_t) buffer[7];
-    config->deployParachuteAt   = (uint8_t) buffer[8];
-    config->servoPeriod         = *(float*) (buffer[12] << 24 | buffer[11] << 16 | buffer[10] << 8 | buffer[9]);
-    config->openServoDuty       = *(float*) (buffer[16] << 24 | buffer[14] << 15 | buffer[14] << 8 | buffer[13]);
-    config->closeServoDuty      = *(float*) (buffer[20] << 24 | buffer[19] << 16 | buffer[18] << 8 | buffer[17]);
-    config->enableLogging       = (uint8_t) buffer[21];
-    config->logStartTime        = (time_t) (buffer[25] << 24 | buffer[24] << 16 | buffer[23] << 8 | buffer[22]);
-    config->lastLogAddress      = (uint16_t) (buffer[26] << 8 | buffer[27]);
+    saveConfig();
 }
 
 /**
