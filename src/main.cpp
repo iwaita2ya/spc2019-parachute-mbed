@@ -340,6 +340,9 @@ int main() {
                     case 0xE0: // サーボ開閉
                         changeServoState();
                         break;
+                    case 0xF0: // 地表高度設定
+                        sensorManager->calculateGroundAltitude();
+                        break;
                     default:
                         break;
                 }
@@ -349,7 +352,7 @@ int main() {
         // blink LED
         for (uint8_t loop=0; loop <= config->statusFlags; loop++) {
             led->write(!(led->read())); // reverse value
-            wait(0.25);
+            wait(0.1);
         }
         wait(0.5);
     }
@@ -543,14 +546,15 @@ void getStatus() {
 
 void getStatusReadable() {
 
+    // read data from config
     char statusByte = config->statusFlags;
 
-//    // Seq. Read
+//    // read data from sram
 //    sram->read(0x0000, &statusByte);
 
-    serial->printf("\nIN ST FL FA OP TD FN ER\r");
-    serial->printf("\n-----------------------\r");
-    serial->printf("\n %d  %d  %d  %d  %d  %d  %d  %d\r"
+    serial->printf("IN ST FL FA OP TD FN ER\r\n");
+    serial->printf("-----------------------\r\n");
+    serial->printf(" %d  %d  %d  %d  %d  %d  %d  %d\r\n"
             , ((statusByte & 0x01) ? 1 : 0)
             , ((statusByte & 0x02) ? 1 : 0)
             , ((statusByte & 0x04) ? 1 : 0)
@@ -576,17 +580,13 @@ void updateStatus(uint8_t newStatus) {
  */
 void getConfig() {
 
-    static const uint8_t bufferLength = 16;
-    char *buffer = new char[bufferLength];
+    char *buffer = new char[0x20];
 
-    for(uint16_t address=0x0000; address<0x0020; address+=bufferLength) {
+    // Seq. Read
+    sram->read(0x0000, buffer, 0x20);
 
-        // Seq. Read
-        sram->read(address, buffer, bufferLength);
-
-        for(uint8_t i=0; i<bufferLength; i++) {
-            serial->putc(buffer[i]);
-        }
+    for(uint8_t i=0; i<0x20; i++) {
+        serial->putc(buffer[i]);
     }
 
     delete[] buffer;
@@ -601,7 +601,7 @@ void getConfigReadable() {
     char *buffer = new char[bufferLength];
 
     // format in hex
-    serial->printf("\r\nADDR 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\r\n");
+    serial->printf("ADDR 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\r\n");
     serial->printf("----------------------------------------------------\r\n");
 
     for(uint16_t address=0x0000; address<0x0020; address+=bufferLength) {
@@ -615,8 +615,44 @@ void getConfigReadable() {
         serial->printf("\r\n");
     }
 
-    // format in each value
+    // print each value
 
+    // status flag
+    getStatusReadable();
+
+    // 海抜0mの大気圧
+    sprintf(txLineBuffer, "Pressure: %u Pa\r\n", (uint32_t) config->pressureAtSeaLevel); //FIXME: 変な値が表示される
+    sendLine();
+
+    sprintf(txLineBuffer, "Ground Altitude: %d m\r\n", config->groundAltitude);
+    sendLine();
+
+    sprintf(txLineBuffer, "Counter Threshold: %d\r\n", config->counterThreshold);
+    sendLine();
+
+    sprintf(txLineBuffer, "Altitude Threshold: %d m\r\n", config->altitudeThreshold);
+    sendLine();
+
+    sprintf(txLineBuffer, "Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
+    sendLine();
+
+    sprintf(txLineBuffer, "Servo Period: %d m\r\n", (uint32_t) config->servoPeriod * 1000);
+    sendLine();
+
+    sprintf(txLineBuffer, "Open Servo Duty: %d m\r\n", (uint32_t) config->servoPeriod * 1000);
+    sendLine();
+
+    sprintf(txLineBuffer, "Close Servo Duty: %d m\r\n", (uint32_t) config->closeServoDuty * 1000);
+    sendLine();
+
+    sprintf(txLineBuffer, "Enable Logging: %d\r\n", config->enableLogging);
+    sendLine();
+
+    sprintf(txLineBuffer, "Start Logging at: %ld\r\n", config->logStartTime);
+    sendLine();
+
+    sprintf(txLineBuffer, "LastLog Address: 0x%04X\r\n", config->lastLogAddress);
+    sendLine();
 
     delete[] buffer;
 }
@@ -638,26 +674,44 @@ void resetConfig() {
     config->lastLogAddress      = 0x0020;    // 0x0020-0x0800
 
     // save onto SRAM
-    sram->write(0x0000, (char*)config, CONFIG_MEMORY_AREA_SIZE);
+    char charValue[sizeof(float)];
+    sram->write(0x0000, config->statusFlags);
+    memcpy(charValue, &config->pressureAtSeaLevel, sizeof(float));
+    sram->write(0x0001, charValue, sizeof(float));
+    sram->write(0x0005, config->groundAltitude);
+    sram->write(0x0006, config->counterThreshold);
+    sram->write(0x0007, config->altitudeThreshold);
+    sram->write(0x0008, config->deployParachuteAt);
+    memcpy(charValue, &config->servoPeriod, sizeof(float));
+    sram->write(0x0009, charValue, sizeof(float));
+    memcpy(charValue, &config->openServoDuty, sizeof(float));
+    sram->write(0x000D, charValue, sizeof(float));
+    memcpy(charValue, &config->closeServoDuty, sizeof(float));
+    sram->write(0x0011, charValue, sizeof(float));
+    sram->write(0x0015, config->enableLogging);
+    memcpy(charValue, &config->logStartTime, sizeof(time_t));
+    sram->write(0x0016, charValue, sizeof(time_t));
+    memcpy(charValue, &config->enableLogging, sizeof(uint16_t));
+    sram->write(0x001B, charValue, sizeof(uint16_t));
 }
 
-void loadConfig() { //TODO: ちゃんと動いているかチェックする
+void loadConfig() {
 
-    char *buffer = new char[CONFIG_MEMORY_AREA_SIZE];
-    sram->read(0x0000, buffer, CONFIG_MEMORY_AREA_SIZE); // update 0x0000-0x0019
+    char *buffer = new char[0x20];
+    sram->read(0x0000, buffer, 0x20); // update 0x0000-0x0019
 
     config->statusFlags         = (uint8_t) buffer[0];
-    config->pressureAtSeaLevel  = (float) (buffer[4] >> 24 | buffer[3] >> 16 | buffer[2] >> 8 | buffer[1]);
+    config->pressureAtSeaLevel  = (float) (buffer[1] << 24 | buffer[2] << 16 | buffer[3] << 8 | buffer[4]);
     config->groundAltitude      = (uint8_t) buffer[5];
     config->counterThreshold    = (uint8_t) buffer[6];
     config->altitudeThreshold   = (uint8_t) buffer[7];
     config->deployParachuteAt   = (uint8_t) buffer[8];
-    config->servoPeriod         = (float) (buffer[12] >> 24 | buffer[11] >> 16 | buffer[10] >> 8 | buffer[9]);
-    config->openServoDuty       = (float) (buffer[16] >> 24 | buffer[15] >> 16 | buffer[14] >> 8 | buffer[13]);
-    config->closeServoDuty      = (float) (buffer[20] >> 24 | buffer[19] >> 16 | buffer[18] >> 8 | buffer[17]);
+    config->servoPeriod         = (float) (buffer[9] << 24 | buffer[10] << 16 | buffer[11] << 8 | buffer[12]);
+    config->openServoDuty       = (float) (buffer[13] << 24 | buffer[14] << 16 | buffer[15] << 8 | buffer[16]);
+    config->closeServoDuty      = (float) (buffer[17] << 24 | buffer[18] << 16 | buffer[19] << 8 | buffer[20]);
     config->enableLogging       = (uint8_t) buffer[21];
-    config->logStartTime        = (time_t) (buffer[25] >> 24 | buffer[24] >> 16 | buffer[23] >> 8 | buffer[22]);
-    config->lastLogAddress      = (uint16_t) (buffer[27] >> 8 | buffer[26]);
+    config->logStartTime        = (time_t) (buffer[22] << 24 | buffer[23] << 16 | buffer[24] << 8 | buffer[25]);
+    config->lastLogAddress      = (uint16_t) (buffer[26] << 8 | buffer[27]);
 }
 
 /**
@@ -726,9 +780,9 @@ void getSensorValuesReadable() {
 
         sensorManager->updateForced();
 
-        serial->printf("\nPressure: %d\r", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
-        serial->printf("\nALT(x10): %d\r", (uint16_t)x10(sensorManager->currentAltitude));
-        serial->printf("\nTMP(x10): %d\r", (uint16_t)x10(sensorManager->currentTemperature));
+        serial->printf("Pressure: %d\r\n", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
+        serial->printf("ALT(x10): %d\r\n", (uint16_t)x10(sensorManager->currentAltitude));
+        serial->printf("TMP(x10): %d\r\n", (uint16_t)x10(sensorManager->currentTemperature));
     }
 }
 
