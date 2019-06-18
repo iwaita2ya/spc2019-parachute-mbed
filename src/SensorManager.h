@@ -24,7 +24,6 @@ namespace greysound {
         uint8_t maxAltitude;            // 最大到達高度
         uint8_t altitudeThreshold;      // 状態遷移に必要な高度しきい値
         uint8_t counterThreshold;       // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
-        uint8_t groundAltitude;         // 地表高度
         uint8_t deployParachuteAt;      // パラシュート開放高度(m)（地表高度に加算）
         uint8_t flyingAltitudeCounter;  // 飛行高度到達カウンタ
         uint8_t fallingAltitudeCounter; // 落下検知カウンタ
@@ -47,7 +46,7 @@ namespace greysound {
          * @param _agAddr
          * @param _mAddr
          */
-        SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr, SystemParameters *params)
+        SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr, SystemParameters *systemParams)
         {
             // インスタンス初期化
             ms5607  = new MS5607I2C(_sda, _scl, true); // sda, scl csb(1:0xEC 0:0xEE)
@@ -55,15 +54,16 @@ namespace greysound {
 
             activeTimer = new Timer();
 
+            params = systemParams;
+
             // 変数初期化
             currentPressure = 0.0f;
             currentAltitude = 0.0f;
             currentTemperature = 0.0f;
             maxAltitude = 0;
-            altitudeThreshold = params->altitudeThreshold;
-            counterThreshold  = params->counterThreshold;
-            groundAltitude    = params->groundAltitude;
-            deployParachuteAt = params->deployParachuteAt;
+            altitudeThreshold = systemParams->altitudeThreshold;
+            counterThreshold  = systemParams->counterThreshold;
+            deployParachuteAt = systemParams->deployParachuteAt;
 
             // カウンタリセット
             //resetCounters();
@@ -85,6 +85,7 @@ namespace greysound {
             end();
 
             // release object
+            delete params;
             delete ms5607;
             delete activeTimer;
         }
@@ -106,7 +107,7 @@ namespace greysound {
             }
 
             // 現在高度の平均値を地表高度として設定する
-            groundAltitude = (uint8_t)(groundAltitudeSamples / numberOfSamples);
+            params->groundAltitude = (uint8_t)(groundAltitudeSamples / numberOfSamples);
 
             return 0;
         }
@@ -172,7 +173,7 @@ namespace greysound {
             }
 
             // 飛行状態チェック：現在高度が地上高度を 2.0m 以上上回っている場合はカウントアップ
-            if(currentAltitude > (groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
+            if(currentAltitude > (params->groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
                 flyingAltitudeCounter++;
             }
 
@@ -182,12 +183,12 @@ namespace greysound {
             }
 
             // パラシュート開放チェック：落下状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
-            if(isFalling() && currentAltitude < (groundAltitude + deployParachuteAt) && deployAltitudeCounter < counterThreshold) {
+            if(isFalling() && currentAltitude < (params->groundAltitude + deployParachuteAt) && deployAltitudeCounter < counterThreshold) {
                 deployAltitudeCounter++;
             }
 
             // 着地状態チェック：飛行状態で、現在高度が 地上高度+2.0m 以下の場合はカウントアップ
-            if(isFalling() && currentAltitude < (groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
+            if(isFalling() && currentAltitude < (params->groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
                 touchDownCounter++;
             }
 
@@ -265,6 +266,7 @@ namespace greysound {
     private:
         SensorState currentState;
         Timer *activeTimer;
+        SystemParameters *params;
 
         /**
          * カウンタ群リセット
