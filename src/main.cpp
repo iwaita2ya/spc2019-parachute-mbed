@@ -321,6 +321,9 @@ int main() {
                     case 0x70: // 設定初期化
                         resetConfig();
                         break;
+                    case 0x71: // 設定をSRAMから読み込む
+                        loadConfig();
+                        break;
                     case 0x80: //TODO: ログ取得
                         break;
                     case 0x90: //TODO: ログ初期化
@@ -621,7 +624,7 @@ void getConfigReadable() {
     getStatusReadable();
 
     // 海抜0mの大気圧
-    sprintf(txLineBuffer, "Pressure: %u Pa\r\n", (uint32_t) config->pressureAtSeaLevel); //FIXME: 変な値が表示される
+    sprintf(txLineBuffer, "Pressure: %lu Pa\r\n", (uint32_t) config->pressureAtSeaLevel); //FIXME: 変な値が表示される
     sendLine();
 
     sprintf(txLineBuffer, "Ground Altitude: %d m\r\n", config->groundAltitude);
@@ -636,19 +639,19 @@ void getConfigReadable() {
     sprintf(txLineBuffer, "Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
     sendLine();
 
-    sprintf(txLineBuffer, "Servo Period: %d m\r\n", (uint32_t) config->servoPeriod * 1000);
+    sprintf(txLineBuffer, "Servo Period: %lu ms\r\n", ((uint32_t) config->servoPeriod) * 1000);
     sendLine();
 
-    sprintf(txLineBuffer, "Open Servo Duty: %d m\r\n", (uint32_t) config->servoPeriod * 1000);
+    sprintf(txLineBuffer, "Open Servo Duty: %lu %%\r\n", (uint32_t) config->servoPeriod * 1000);
     sendLine();
 
-    sprintf(txLineBuffer, "Close Servo Duty: %d m\r\n", (uint32_t) config->closeServoDuty * 1000);
+    sprintf(txLineBuffer, "Close Servo Duty: %lu %%\r\n", (uint32_t) config->closeServoDuty * 1000);
     sendLine();
 
     sprintf(txLineBuffer, "Enable Logging: %d\r\n", config->enableLogging);
     sendLine();
 
-    sprintf(txLineBuffer, "Start Logging at: %ld\r\n", config->logStartTime);
+    sprintf(txLineBuffer, "Start Logging at: %lu\r\n", (uint32_t) config->logStartTime);
     sendLine();
 
     sprintf(txLineBuffer, "LastLog Address: 0x%04X\r\n", config->lastLogAddress);
@@ -698,19 +701,19 @@ void resetConfig() {
 void loadConfig() {
 
     char *buffer = new char[0x20];
-    sram->read(0x0000, buffer, 0x20); // update 0x0000-0x0019
+    sram->read(0x0000, buffer, 0x20); // read 0x0000-0x0020
 
     config->statusFlags         = (uint8_t) buffer[0];
-    config->pressureAtSeaLevel  = (float) (buffer[1] << 24 | buffer[2] << 16 | buffer[3] << 8 | buffer[4]);
+    config->pressureAtSeaLevel  = *(float*)(buffer[4] << 24 | buffer[3] << 16 | buffer[2] << 8 | buffer[1]);
     config->groundAltitude      = (uint8_t) buffer[5];
     config->counterThreshold    = (uint8_t) buffer[6];
     config->altitudeThreshold   = (uint8_t) buffer[7];
     config->deployParachuteAt   = (uint8_t) buffer[8];
-    config->servoPeriod         = (float) (buffer[9] << 24 | buffer[10] << 16 | buffer[11] << 8 | buffer[12]);
-    config->openServoDuty       = (float) (buffer[13] << 24 | buffer[14] << 16 | buffer[15] << 8 | buffer[16]);
-    config->closeServoDuty      = (float) (buffer[17] << 24 | buffer[18] << 16 | buffer[19] << 8 | buffer[20]);
+    config->servoPeriod         = *(float*) (buffer[12] << 24 | buffer[11] << 16 | buffer[10] << 8 | buffer[9]);
+    config->openServoDuty       = *(float*) (buffer[16] << 24 | buffer[14] << 15 | buffer[14] << 8 | buffer[13]);
+    config->closeServoDuty      = *(float*) (buffer[20] << 24 | buffer[19] << 16 | buffer[18] << 8 | buffer[17]);
     config->enableLogging       = (uint8_t) buffer[21];
-    config->logStartTime        = (time_t) (buffer[22] << 24 | buffer[23] << 16 | buffer[24] << 8 | buffer[25]);
+    config->logStartTime        = (time_t) (buffer[25] << 24 | buffer[24] << 16 | buffer[23] << 8 | buffer[22]);
     config->lastLogAddress      = (uint16_t) (buffer[26] << 8 | buffer[27]);
 }
 
