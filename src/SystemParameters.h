@@ -13,8 +13,8 @@ struct SystemParameters {
     uint8_t altitudeThreshold;  // 状態遷移に必要な高度しきい値
     uint8_t deployParachuteAt;  // パラシュート開放高度(m)
     float servoPeriod;
-    float openServoDuty;
-    float closeServoDuty;
+    float openServoPeriod;
+    float closeServoPeriod;
     uint8_t enableLogging;
     time_t logStartTime;
     uint16_t lastLogAddress;
