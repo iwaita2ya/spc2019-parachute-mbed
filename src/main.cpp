@@ -15,7 +15,8 @@
 #include "ServoManager.h"
 #include "SensorManager.h"
 
-#define CONFIG_MEMORY_AREA_SIZE 30
+#define CONFIG_AREA_SIZE 0x20 // 0x00-0x20
+#define SRAM_MAX_SIZE 0x0800 // 0x0000-0x0800
 #define SENSOR_UPDATE_FREQ 0.1
 
 using namespace greysound;
@@ -98,6 +99,7 @@ InterruptIn *servoControlPin;   // パラシュートロック／アンロック
  * LED
  */
 DigitalOut *led; // LED
+uint8_t ledBlinkCount;
 
 /**
  * Jumper
@@ -133,32 +135,32 @@ void sendLine();
 void readLine();
 
 // ----- SRAM -----
-void printStatusSRAM();             // print status from SRAM (hex)
-void printStatusVarsReadable();     // get config data from SRAM (ascii)
-void updateStatus(uint8_t newStatus);
-void printConfigSRAM();          // get config data from SRAM
-void printConfigSRAMReadable();
-void printConfigVars();         // get config data from SRAM (hex)
-void printConfigVarsReadable(); // get config data from SRAM (ascii)
-void loadConfig();              // load config data from SRAM to Vars
-void saveConfig();              // Save data onto SRAM
-void resetConfig();             // Init config with default value (and save onto SRAM)
-void dumpMemory();              // dump all data in SRAM (hex)
-void dumpMemoryReadable();      // dump all data in SRAM (ascii)
-void clearLog(uint16_t startAddress);   // clear logged data, not config
+void printStatusSRAM();                 // get status from SRAM (hex)
+void printStatusVarsReadable();         // get config data from SRAM (ascii)
+void updateStatus(uint8_t newStatus);   // update status
+void printConfigSRAM();                 // get config data from SRAM (hex)
+void printConfigSRAMReadable();         // get config data from SRAM (ascii)
+void printConfigVars();                 // get config data from SRAM (hex)
+void printConfigVarsReadable();         // get config data from SRAM (ascii)
+void loadConfig();                      // load config data from SRAM to Vars
+void saveConfig();                      // Save config data onto SRAM
+void resetConfig();                     // Init config with default value (and save onto SRAM)
+void dumpMemory();                      // dump all data in SRAM (hex)
+void dumpMemoryReadable();              // dump all data in SRAM (ascii)
+void clearLog(uint16_t startAddress=CONFIG_AREA_SIZE, uint16_t endAddress=SRAM_MAX_SIZE); // clear logged data
 
 // ----- SERVO -----
-static void changeServoState();
+static void changeServoState();         // open/close
 
 // ----- ALTIMETER -----
-static void setAltitude();
+static void setCurrentAltitude();
 
 // ----- Sensor -----
 static uint8_t startSensor();
 static void updateSensor();
 static uint8_t stopSensor();
-void getSensorValues();
-void getSensorValuesReadable();
+void printSensorValues();
+void printSensorValuesReadable();
 
 // ----- Utils -----
 int32_t x10(float);
@@ -181,7 +183,7 @@ int main() {
     serial->baud(115200); // default:9600bps
     // set interrupts for Tx/Rx
     serial->attach(&interruptRx, Serial::RxIrq);
-    serial->attach(&interruptTx, Serial::TxIrq);
+    //serial->attach(&interruptTx, Serial::TxIrq); // not used
 
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
@@ -202,7 +204,7 @@ int main() {
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
-    setAltitudePin->fall(&setAltitude);
+    setAltitudePin->fall(&setCurrentAltitude);
 
     // Servo Open/Close Buttons
     servoControlPin = new InterruptIn(P1_19);// サーボ操作ボタン
@@ -211,6 +213,7 @@ int main() {
 
     // Status LED
     led = new DigitalOut(P0_7);
+    ledBlinkCount = 1;
 
     /**
      * Main Loop
@@ -338,7 +341,8 @@ int main() {
                         break;
                     case 0x80: //TODO: ログ取得
                         break;
-                    case 0x90: //TODO: ログ初期化
+                    case 0x90: // ログデータ消去
+                        clearLog(); //TODO: テスト
                         break;
                     case 0xA0: // メモリダンプ　(hex)
                         dumpMemory();
@@ -346,11 +350,11 @@ int main() {
                     case 0xB0: // メモリダンプ　(ascii)
                         dumpMemoryReadable();
                         break;
-                    case 0xC0: //TODO: センサ値取得 (ascii)
-                        getSensorValues();
+                    case 0xC0: // センサ値取得 (ascii)
+                        printSensorValues(); //TODO: テスト
                         break;
                     case 0xD0: // センサ値取得 (ascii)
-                        getSensorValuesReadable();
+                        printSensorValuesReadable();
                         break;
                     case 0xE0: // サーボ開閉
                         changeServoState();
@@ -365,16 +369,16 @@ int main() {
         }
 
         // blink LED
-        for (uint8_t loop=0; loop <= config->statusFlags; loop++) {
-            led->write(!(led->read())); // reverse value
-            wait(0.1);
+        for (uint8_t i=0; i<ledBlinkCount; i++) {
+            led->write(!(led->read()));
         }
-        wait(0.5);
+        wait(0.1);
     }
 
     /**
      * Exit
      */
+    // stop timer
     sensorTicker->detach();
 
     // release objects
@@ -503,15 +507,15 @@ void interruptTx() {
 }
 
 /**
- * dump all data stored in 47L16 (hex)
+ * SRAM
  */
-
+// dump all data stored in SRAM (hex)
 void dumpMemory() {
 
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
 
-    for(uint16_t address=0x0000; address<0x0800; address+=bufferLength) {
+    for(uint16_t address=0x0000; address<SRAM_MAX_SIZE; address+=bufferLength) {
 
         // Seq. Read
         sram->read(address, buffer, bufferLength);
@@ -524,18 +528,16 @@ void dumpMemory() {
     delete[] buffer;
 }
 
-/**
- * dump all data stored in 47L16 (ascii)
- */
+// dump all data stored in SRAM (ascii)
 void dumpMemoryReadable() {
 
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
 
-    serial->printf("\r\nADDR 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\r\n");
+    serial->printf("ADDR 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\r\n");
     serial->printf("----------------------------------------------------\r\n");
 
-    for(uint16_t address=0x0000; address<0x0800; address+=bufferLength) {
+    for(uint16_t address=0x0000; address<SRAM_MAX_SIZE; address+=bufferLength) {
         // Seq. Read
         sram->read(address, buffer, bufferLength);
 
@@ -595,12 +597,12 @@ void updateStatus(uint8_t newStatus) {
  */
 void printConfigSRAM() {
 
-    char *buffer = new char[0x20];
+    char *buffer = new char[CONFIG_AREA_SIZE];
 
     // Seq. Read
-    sram->read(0x0000, buffer, 0x20);
+    sram->read(0x0000, buffer, CONFIG_AREA_SIZE);
 
-    for(uint8_t i=0; i<0x20; i++) {
+    for(uint8_t i=0; i<CONFIG_AREA_SIZE; i++) {
         serial->putc(buffer[i]);
     }
 
@@ -712,9 +714,9 @@ void printConfigVarsReadable() {
 void loadConfig() {
 
     uint32_t uint32Value;
-    char *buffer = new char[0x20];
+    char *buffer = new char[CONFIG_AREA_SIZE];
 
-    sram->read(0x0000, (char*)buffer, 0x20); // read 0x0000-0x0020
+    sram->read(0x0000, (char*)buffer, CONFIG_AREA_SIZE); // read 0x0000-0x0020
 
     config->statusFlags        = (uint8_t) buffer[0];
     uint32Value = (buffer[4] << 24 | buffer[3] << 16 | buffer[2] << 8 | buffer[1]);
@@ -786,6 +788,16 @@ void resetConfig() {
 }
 
 /**
+ * LOG
+ */
+void clearLog(uint16_t startAddress, uint16_t endAddress)
+{
+    for (uint16_t i=startAddress; i<endAddress; i++) {
+        sram->write(i, 0x00);
+    }
+}
+
+/**
  * SENSOR
  */
 
@@ -837,16 +849,38 @@ static uint8_t stopSensor()
     return RESULT_OK;
 }
 
-void getSensorValues() {
+
+/**
+ * センサの現在値を返す(hex)
+ */
+void printSensorValues() {
     if(sensorManager != NULL) {
+
+        uint8_t i;
 
         sensorManager->updateForced();
 
-        //TODO: バイナリデータとして書き出す
+        // バイナリデータとして書き出す
+        char charValue[sizeof(float)];
+        memcpy(charValue, &sensorManager->currentPressure, sizeof(float)); // Current Pressure
+        for(i=0;i<sizeof(float);i++) {
+            serial->putc(charValue[i]);
+        }
+        memcpy(charValue, &sensorManager->currentAltitude, sizeof(float)); // Current Altitude
+        for(i=0;i<sizeof(float);i++) {
+            serial->putc(charValue[i]);
+        }
+        memcpy(charValue, &sensorManager->currentTemperature, sizeof(float)); // Current Temperature
+        for(i=0;i<sizeof(float);i++) {
+            serial->putc(charValue[i]);
+        }
     }
 }
 
-void getSensorValuesReadable() {
+/**
+ * センサの現在値を返す(ascii)
+ */
+void printSensorValuesReadable() {
     if(sensorManager != NULL) {
 
         sensorManager->updateForced();
@@ -887,7 +921,7 @@ static void changeServoState()
 }
 
 // 地上の高度をセットする
-static void setAltitude()
+static void setCurrentAltitude()
 {
     DEBUG_PRINT("\nsetAltitude()\r");
 
