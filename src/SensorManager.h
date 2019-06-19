@@ -97,7 +97,7 @@ namespace greysound {
          */
         uint8_t calculateGroundAltitude()
         {
-            const uint8_t numberOfSamples = 16;
+            const uint8_t numberOfSamples = 8;
             float groundAltitudeSamples = 0.0f;
 
             // 現在高度をサンプリングする
