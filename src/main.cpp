@@ -104,7 +104,7 @@ uint8_t ledBlinkCount;
 /**
  * Jumper
  */
-DigitalIn *enableSerial;
+DigitalIn *enableSerialPin;
 
 /**
  * SRAM
@@ -175,8 +175,8 @@ int main() {
     shouldLoop = 1;
 
     // set Serial Enable/Disable
-    enableSerial = new DigitalIn(P1_15);
-    enableSerial->mode(PullUp);
+    enableSerialPin = new DigitalIn(P1_15);
+    enableSerialPin->mode(PullUp);
 
     // getStandBy serial baud rate
     serial = new RawSerial(P0_19, P0_18); // tx, rx
@@ -188,7 +188,8 @@ int main() {
     // getStandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
     config = new SystemParameters();
-    loadConfig();
+    resetConfig(); //MEMO: 起動時に一部データが欠落することに対する暫定措置
+//    loadConfig();
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -295,7 +296,7 @@ int main() {
          * 0xD0 センサ値取得 (human readable)
          * 0xE0 サーボ開閉
          */
-        if(enableSerial->read() == ENABLE_SERIAL || config->statusFlags & FINISH) {
+        if(enableSerialPin->read() == ENABLE_SERIAL || config->statusFlags & FINISH) {
 
             // data received and not read yet?
             if (rxInPointer != rxOutPointer) {
@@ -350,7 +351,7 @@ int main() {
                     case 0xB0: // メモリダンプ　(ascii)
                         dumpMemoryReadable();
                         break;
-                    case 0xC0: // センサ値取得 (ascii)
+                    case 0xC0: // センサ値取得 (hex)
                         printSensorValues(); //TODO: テスト
                         break;
                     case 0xD0: // センサ値取得 (ascii)
@@ -372,7 +373,7 @@ int main() {
         for (uint8_t i=0; i<ledBlinkCount; i++) {
             led->write(!(led->read()));
         }
-        wait(0.1);
+        wait(0.5);
     }
 
     /**
@@ -885,7 +886,8 @@ void printSensorValuesReadable() {
 
         sensorManager->updateForced();
 
-        serial->printf("Pressure: %d\r\n", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
+        serial->printf("SeaLev P: %d\r\n", (uint32_t)(config->pressureAtSeaLevel));     // Pa: 100Pa=1hPa
+        serial->printf("CurrentP: %d\r\n", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
         serial->printf("ALT(x10): %d\r\n", (uint16_t)x10(sensorManager->currentAltitude));
         serial->printf("TMP(x10): %d\r\n", (uint16_t)x10(sensorManager->currentTemperature));
     }
