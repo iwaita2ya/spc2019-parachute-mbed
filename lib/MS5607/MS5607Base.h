@@ -73,8 +73,8 @@ public:
         return float((((int64_t) getRawPressure() * sens >> 21) - off) >> 15);
     }
 
-    float getAltitude(int presssure = 0) {
-        return toAltitude(presssure ? presssure : (int) getPressure());
+    float getAltitude(int pressure = 0) {
+        return toAltitude(pressure ? pressure : (int) getPressure());
     }
 
     void setPressureAtSeaLevel(float pressureAtSeaLevel) {
