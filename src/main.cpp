@@ -201,6 +201,7 @@ int main() {
     // getStandBy SensorManager (and Ticker)
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
+    sensorManager->calculateGroundAltitude(); //MEMO: テスト用暫定措置。動作確認が取れたらコメントアウト
 
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
@@ -223,20 +224,16 @@ int main() {
 
         /**
          * ステータスに応じて処理を分岐
-         * ステータスフラグはINITから順番に立てられる（クリアされない）ので、
+         * ステータスフラグはINITから順番に立てられる（クリアされない）ので
          * FINISHから順に判定する
-         * INIT       = 0x01,
-         * STAND_BY   = 0x02,
-         * FLYING     = 0x04,
-         * FALLING    = 0x08,
-         * OPEN_PARA  = 0x10,
-         * TOUCH_DOWN = 0x20,
-         * FINISH     = 0x40,
-         * ERROR      = 0xFF  // エラー発生
          */
-        if(config->statusFlags & TOUCH_DOWN) { // 着地
+        if(config->statusFlags & FINISH) { // 終了
+            // DO Nothing
+        }
+        else if(config->statusFlags & TOUCH_DOWN) { // 着地
             // システム停止
             if(stopSensor() == RESULT_OK) {
+                serial->printf("TOUCH_DOWN->FINISH\r\n");
                 updateStatus(config->statusFlags | FINISH);
             }
         }
@@ -246,6 +243,7 @@ int main() {
 
             // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
             if(sensorManager->isTouchDown()) {
+                serial->printf("OPEN_PARA->TOUCH_DOWN\r\n");
                 updateStatus(config->statusFlags | TOUCH_DOWN);
             }
         }
@@ -253,6 +251,7 @@ int main() {
 
             // 開放高度に達したら OPEN_PARA に遷移
             if(sensorManager->isOkToDeployParachute()) {
+                serial->printf("FALLING->OPEN_PARA\r\n");
                 updateStatus(config->statusFlags | OPEN_PARA);
             }
         }
@@ -261,18 +260,21 @@ int main() {
 
             //高度が減少に転じたら FALLING に遷移
             if(sensorManager->isFalling()) {
+                serial->printf("FLYING->FALLING\r\n");
                 updateStatus(config->statusFlags | FALLING);
             }
         }
         else if(config->statusFlags & STAND_BY) { //
             // 規定高度に達したら FLYING に遷移
             if(sensorManager->isFlying()) {
+                serial->printf("STAND_BY->FLYING\r\n");
                 updateStatus(config->statusFlags | FLYING);
             }
         }
         else if(config->statusFlags & INIT) {
             // センサ開始したら STAND_BY に遷移
             if(startSensor() == RESULT_OK) {
+                serial->printf("INIT->STAND_BY\r\n");
                 updateStatus(config->statusFlags | STAND_BY);
             }
         }
@@ -280,21 +282,6 @@ int main() {
         /**
          * 受信データの最初の1バイトがコマンドバイト(CB)
          * 更新系のコマンドについては、CBの後に更新値が1−20バイト続く
-         * 0x00 ステータス取得
-         * 0x10 ステータス取得 (human readable)
-         * 0x20 ステータス更新
-         * 0x30 ステータスクリア
-         * 0x40 設定取得
-         * 0x50 設定取得 (human readable)
-         * 0x60 設定更新
-         * 0x70 設定初期化
-         * 0x80 ログ取得
-         * 0x90 ログクリア
-         * 0xA0 メモリダンプ
-         * 0xB0 メモリダンプ (human readable)
-         * 0xC0 センサ値取得
-         * 0xD0 センサ値取得 (human readable)
-         * 0xE0 サーボ開閉
          */
         if(enableSerialPin->read() == ENABLE_SERIAL || config->statusFlags & FINISH) {
 
@@ -370,10 +357,11 @@ int main() {
         }
 
         // blink LED
+        //TODO: タイマー処理として切り出す
         for (uint8_t i=0; i<ledBlinkCount; i++) {
             led->write(!(led->read()));
         }
-        wait(0.5);
+        wait(0.2);
     }
 
     /**
@@ -805,17 +793,13 @@ void clearLog(uint16_t startAddress, uint16_t endAddress)
 // センサ開始
 static uint8_t startSensor()
 {
-    // センサ開始
-    if(sensorManager && sensorManager->getCurrentState() == SensorManager::STAND_BY)
-    {
-        uint8_t result = sensorManager->begin();
+    // null チェック
+    if(sensorManager == NULL) {
+        return RESULT_NG;
+    }
 
-        // error
-        if(result != 0) {
-            return RESULT_NG;
-        }
-    } else {
-        // couldn't start sensor
+    // センサ開始
+    if(sensorManager->begin() != RESULT_OK) {
         return RESULT_NG;
     }
 
@@ -900,7 +884,7 @@ void printSensorValuesReadable() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
-    DEBUG_PRINT("\nchangeServoState()\r");
+    DEBUG_PRINT("changeServoState()\r\n");
 
     if(servoManager != NULL)
     {
@@ -925,7 +909,7 @@ static void changeServoState()
 // 地上の高度をセットする
 static void setCurrentAltitude()
 {
-    DEBUG_PRINT("\nsetAltitude()\r");
+    DEBUG_PRINT("setAltitude()\r\n");
 
     if(sensorManager != NULL)
     {
