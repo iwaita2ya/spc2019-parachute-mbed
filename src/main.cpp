@@ -158,7 +158,7 @@ void dumpMemoryReadable();              // dump all data in SRAM (ascii)
 void clearLog(uint16_t startAddress=CONFIG_AREA_SIZE, uint16_t endAddress=SRAM_MAX_SIZE); // clear logged data
 
 // ----- SERVO -----
-static void changeServoState();         // open/close
+static void changeServoState();         // open/close servo
 
 // ----- ALTIMETER -----
 static void setGroundAltitude();
@@ -310,7 +310,7 @@ int main() {
                         printSensorValuesReadable();
                         break;
                     case 0xE0: // サーボ開閉
-                        changeServoState();
+                        servoManager->flipState();
                         break;
                     case 0xF0: // 地表高度設定
                         sensorManager->calculateGroundAltitude();
@@ -911,21 +911,7 @@ static void changeServoState()
 
     if(servoManager != NULL)
     {
-        if (config->statusFlags & 0x01) {
-
-            // release (1->0)
-            servoManager->moveLeft();
-
-            // clear flag
-            updateStatus(config->statusFlags & 0xFE);
-        } else {
-
-            // lock (0->1)
-            servoManager->moveRight();
-
-            // set flag
-            updateStatus(config->statusFlags | 0x01);
-        }
+        servoManager->flipState();
     }
 }
 
