@@ -101,6 +101,7 @@ Ticker *probeTicker; // プローブ状態チェックタイマ
  */
 InterruptIn *setAltitudePin;    // 地表高度セットトリガ
 InterruptIn *servoControlPin;   // パラシュートロック／アンロックトリガ
+InterruptIn *initProbePin;      // プローブ初期化信号
 
 /**
  * LED
@@ -162,6 +163,9 @@ static void changeServoState();         // open/close servo
 
 // ----- ALTIMETER -----
 static void setGroundAltitude();
+
+// ----- Start Probe -----
+static void setProbeStatusAsInit();
 
 // ----- Sensor -----
 static uint8_t startSensor();
@@ -226,6 +230,11 @@ int main() {
     servoControlPin = new InterruptIn(P1_19);// サーボ操作ボタン
     servoControlPin->mode(PullUp);
     servoControlPin->fall(&changeServoState);
+
+    // Init Probe Buttons
+    initProbePin = new InterruptIn(P0_17);     // プローブ開始ボタン
+    initProbePin->mode(PullUp);
+    initProbePin->fall(&setProbeStatusAsInit);
 
     // プローブステータス取得開始
     probeTicker = new Ticker;
@@ -335,6 +344,7 @@ int main() {
     delete(probeTicker);
     delete(sensorTicker);
     delete(led);
+    delete(initProbePin);
     delete(setAltitudePin);
     delete(servoControlPin);
     delete(sensorManager);
@@ -925,6 +935,12 @@ static void setGroundAltitude()
         // 地表高度設定
         sensorManager->calculateGroundAltitude();
     }
+}
+
+// プローブを開始する
+static void setProbeStatusAsInit()
+{
+    updateStatus(config->statusFlags | INIT);
 }
 
 /**
