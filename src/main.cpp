@@ -391,11 +391,6 @@ int main() {
 // Copy tx line buffer to large tx buffer for tx interrupt routine
 void sendLine() {
 
-    // null check
-    if(serial == NULL) {
-        return;
-    }
-
     int i;
     char temp_char;
     bool empty;
@@ -437,11 +432,6 @@ void sendLine() {
 // Read a line from the large rx buffer from rx interrupt routine
 void readLine() {
 
-    // null check
-    if(serial == NULL) {
-        return;
-    }
-
     int i;
     i = 0;
     // Start Critical Section - don't interrupt while changing global buffer variables
@@ -463,11 +453,6 @@ void readLine() {
 // Interrupt Routine to read in data from serial port
 void interruptRx() {
 
-    // null check
-    if(serial == NULL) {
-        return;
-    }
-
     // Loop just in case more than one character is in UART's receive FIFO buffer
     // Stop if buffer full
     while ((serial->readable()) && (((rxInPointer + 1) % serialBufferSize) != rxOutPointer)) {
@@ -483,10 +468,6 @@ void interruptRx() {
 // Interrupt Routine to write out data to serial port
 void interruptTx() {
 
-    // null check
-    if(serial == NULL) {
-        return;
-    }
     // Loop to fill more than one character in UART's transmit FIFO buffer
     // Stop if buffer empty
     while ((serial->writeable()) && (txInPointer != txOutPointer)) {
