@@ -49,12 +49,12 @@ namespace greysound {
         SensorManager(PinName _sda, PinName _scl, uint8_t _agAddr, uint8_t _mAddr, SystemParameters *systemParams)
         {
             // インスタンス初期化
+            params = systemParams;
             ms5607  = new MS5607I2C(_sda, _scl, true); // sda, scl csb(1:0xEC 0:0xEE)
             ms5607->setPressureAtSeaLevel(params->pressureAtSeaLevel);
 
             activeTimer = new Timer();
 
-            params = systemParams;
 
             // 変数初期化
             currentPressure = 0.0f;
