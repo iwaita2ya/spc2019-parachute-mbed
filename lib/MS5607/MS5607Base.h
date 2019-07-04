@@ -74,7 +74,7 @@ public:
     }
 
     float getAltitude(int pressure = 0) {
-        return toAltitude(pressure ? pressure : (int) getPressure());
+        return toAltitude(pressure > 0 ? pressure : (int) getPressure());
     }
 
     void setPressureAtSeaLevel(float pressureAtSeaLevel) {
@@ -117,7 +117,7 @@ protected:
     float toAltitude(int pressure) {
         // Ref. 29124-AltimeterAppNote1.pdf
         const float R = 287.052; // specific gas constant R*/M0
-        const float g = 9.80665; // standard gravity 
+        const float g = 9.80665; // standard gravity
         const float t_grad = 0.0065; // gradient of temperature
         const float t0 = 273.15f + 15; // temperature at 0 altitude
         //const float p0 = 101100; // pressure at 0 altitude　//グローバル変数に変更
