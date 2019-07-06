@@ -805,7 +805,7 @@ void resetConfig() {
     config->currentAltitude     = 34;        // 現在高度
     config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
     config->counterThreshold    = 5;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 3;         // 状態遷移に必要な高度に達したと判定する回数しきい値
+    config->altitudeThreshold   = 2;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
     config->openServoPeriod     = 0.037f;    // 0-1.0f
     config->closeServoPeriod    = 0.03f;     // 0-1.0f
     config->enableLogging       = 0x01;      // 0x01:true 0x00:false

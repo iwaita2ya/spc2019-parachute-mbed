@@ -163,7 +163,8 @@ namespace greysound {
             activeTimeMs = activeTimer->read_ms();
 
             // 現在高度を取得
-            params->currentAltitude = ms5607->getAltitude();
+            currentPressure = ms5607->getPressure();
+            params->currentAltitude = (uint8_t) ms5607->getAltitude((int)currentPressure);
 
             // 現在高度が最大到達高度を上回っていたら更新
             if (params->currentAltitude > maxAltitude) {
