@@ -15,9 +15,11 @@
 #include "ServoManager.h"
 #include "SensorManager.h"
 
-#define CONFIG_AREA_SIZE 0x20 // 0x00-0x20
-#define SRAM_MAX_SIZE 0x0800 // 0x0000-0x0800
-#define SENSOR_UPDATE_FREQ 0.1
+#define CONFIG_AREA_SIZE 0x20   // 0x00-0x20
+#define SRAM_MAX_SIZE 0x0800    // 0x0000-0x0800
+#define SENSOR_UPDATE_FREQ 0.1  // センサ更新頻度
+#define PROBE_UPDATE_FREQ 0.1   // プローブ状態チェック頻度
+#define LED_BLINK_FREQ 2.0      // LED点滅頻度
 
 using namespace greysound;
 
@@ -90,15 +92,22 @@ SensorManager *sensorManager;
 Ticker *sensorTicker;   // センサ更新タイマ
 
 /**
+ * Probe Status Checker
+ */
+Ticker *probeTicker; // プローブ状態チェックタイマ
+
+/**
  * Buttons
  */
 InterruptIn *setAltitudePin;    // 地表高度セットトリガ
 InterruptIn *servoControlPin;   // パラシュートロック／アンロックトリガ
+InterruptIn *initProbePin;      // プローブ初期化信号
 
 /**
  * LED
  */
 DigitalOut *led; // LED
+Ticker *ledTicker;
 uint8_t ledBlinkCount;
 
 /**
@@ -118,9 +127,9 @@ DigitalIn *enableSerialPin;
  * 0x0013-0x0016 float    サーボ閉 duty比 (0-1.0f)
  * 0x0017        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
  * 0x0018-0x001B time_t   ロギング開始時刻(RTCから取得する）
- * 0x001C-0x001D uint16_t 最終ログ格納アドレス (0x0020-0x0800)
+ * 0x001C-0x001D uint16_t 最終ログ格納アドレス (0x0021-0x0800)
  * 0x001E-0x001F          (予備)
- * 0x0020-0x0800          ログデータ格納領域
+ * 0x0021-0x0800          ログデータ格納領域
  */
 SerialSRAM *sram;
 
@@ -153,7 +162,10 @@ void clearLog(uint16_t startAddress=CONFIG_AREA_SIZE, uint16_t endAddress=SRAM_M
 static void changeServoState();         // open/close servo
 
 // ----- ALTIMETER -----
-static void setCurrentAltitude();
+static void setGroundAltitude();
+
+// ----- Start Probe -----
+static void setProbeStatusAsInit();
 
 // ----- Sensor -----
 static uint8_t startSensor();
@@ -161,6 +173,12 @@ static void updateSensor();
 static uint8_t stopSensor();
 void printSensorValues();
 void printSensorValuesReadable();
+
+// ----- Probe Status ----
+void checkProbeStatus();
+
+// ----- LED -----
+void blinkLED();
 
 // ----- Utils -----
 int32_t x10(float);
@@ -206,16 +224,28 @@ int main() {
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
-    setAltitudePin->fall(&setCurrentAltitude);
+    setAltitudePin->fall(&setGroundAltitude);
 
     // Servo Open/Close Buttons
     servoControlPin = new InterruptIn(P1_19);// サーボ操作ボタン
     servoControlPin->mode(PullUp);
     servoControlPin->fall(&changeServoState);
 
-    // Status LED
-    led = new DigitalOut(P0_7);
+    // Init Probe Buttons
+    initProbePin = new InterruptIn(P0_17);     // プローブ開始ボタン
+    initProbePin->mode(PullUp);
+    initProbePin->fall(&setProbeStatusAsInit);
+
+    // プローブステータス取得開始
+    probeTicker = new Ticker;
+    probeTicker->attach(&checkProbeStatus, PROBE_UPDATE_FREQ);
+
+    // LED 点滅開始
     ledBlinkCount = 1;
+    led = new DigitalOut(P0_7);
+    led->write(0); // set led off
+    ledTicker = new Ticker;
+    ledTicker->attach(&blinkLED, LED_BLINK_FREQ);
 
     /**
      * Main Loop
@@ -223,64 +253,8 @@ int main() {
     while(shouldLoop == 1) {
 
         /**
-         * ステータスに応じて処理を分岐
-         * ステータスフラグはINITから順番に立てられる（クリアされない）ので
-         * FINISHから順に判定する
-         */
-        if(config->statusFlags & FINISH) { // 終了
-            // DO Nothing
-        }
-        else if(config->statusFlags & TOUCH_DOWN) { // 着地
-            // システム停止
-            if(stopSensor() == RESULT_OK) {
-                serial->printf("TOUCH_DOWN->FINISH\r\n");
-                updateStatus(config->statusFlags | FINISH);
-            }
-        }
-        else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
-            // パラシュート開放
-            servoManager->moveLeft();
-
-            // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
-            if(sensorManager->isTouchDown()) {
-                serial->printf("OPEN_PARA->TOUCH_DOWN\r\n");
-                updateStatus(config->statusFlags | TOUCH_DOWN);
-            }
-        }
-        else if(config->statusFlags & FALLING) { // 落下中
-
-            // 開放高度に達したら OPEN_PARA に遷移
-            if(sensorManager->isOkToDeployParachute()) {
-                serial->printf("FALLING->OPEN_PARA\r\n");
-                updateStatus(config->statusFlags | OPEN_PARA);
-            }
-        }
-        else if(config->statusFlags & FLYING) { // 飛行中
-            //TODO: ロギング開始
-
-            //高度が減少に転じたら FALLING に遷移
-            if(sensorManager->isFalling()) {
-                serial->printf("FLYING->FALLING\r\n");
-                updateStatus(config->statusFlags | FALLING);
-            }
-        }
-        else if(config->statusFlags & STAND_BY) { //
-            // 規定高度に達したら FLYING に遷移
-            if(sensorManager->isFlying()) {
-                serial->printf("STAND_BY->FLYING\r\n");
-                updateStatus(config->statusFlags | FLYING);
-            }
-        }
-        else if(config->statusFlags & INIT) {
-            // センサ開始したら STAND_BY に遷移
-            if(startSensor() == RESULT_OK) {
-                serial->printf("INIT->STAND_BY\r\n");
-                updateStatus(config->statusFlags | STAND_BY);
-            }
-        }
-
-        /**
-         * 受信データの最初の1バイトがコマンドバイト(CB)
+         * シリアル通信の受送信処理
+         * 受信データの最初の1バイトがコマンドバイト(CB)なのでその値をチェックして処理を分岐
          * 更新系のコマンドについては、CBの後に更新値が1−20バイト続く
          */
         if(enableSerialPin->read() == ENABLE_SERIAL || config->statusFlags & FINISH) {
@@ -355,30 +329,28 @@ int main() {
                 }
             }
         }
-
-        // blink LED
-        //TODO: タイマー処理として切り出す
-        for (uint8_t i=0; i<ledBlinkCount; i++) {
-            led->write(!(led->read()));
-        }
-        wait(0.2);
     }
 
     /**
      * Exit
      */
-    // stop timer
+    // stop timers
+    ledTicker->detach();
+    probeTicker->detach();
     sensorTicker->detach();
 
     // release objects
-    delete led;
-    delete setAltitudePin;
-    delete servoControlPin;
-    delete sensorManager;
-    delete sensorTicker;
-    delete servoManager;
-    delete sram;
-    delete serial;
+    delete(ledTicker);
+    delete(probeTicker);
+    delete(sensorTicker);
+    delete(led);
+    delete(initProbePin);
+    delete(setAltitudePin);
+    delete(servoControlPin);
+    delete(sensorManager);
+    delete(servoManager);
+    delete(sram);
+    delete(serial);
 
     return RESULT_OK;
 }
@@ -752,7 +724,7 @@ void resetConfig() {
     config->closeServoPeriod    = 0.03f;     // 0-1.0f
     config->enableLogging       = 0x01;      // 0x01:true 0x00:false
     config->logStartTime        = 0x01020304;
-    config->lastLogAddress      = 0x0020;    // 0x0020-0x0800
+    config->lastLogAddress      = 0x0021;    // 0x0021-0x0800
 
     saveConfig();
 }
@@ -859,6 +831,67 @@ void printSensorValuesReadable() {
 }
 
 /**
+* プローブステータスに応じて処理を分岐
+* ステータスフラグはINITから順番に立てられる（クリアされない）ので
+* FINISHから順に判定する
+*/
+void checkProbeStatus() {
+
+    if(config->statusFlags & FINISH) { // 終了
+        // DO Nothing
+        return;
+    }
+    else if(config->statusFlags & TOUCH_DOWN) { // 着地
+        // システム停止
+        if(stopSensor() == RESULT_OK) {
+            DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
+            updateStatus(config->statusFlags | FINISH);
+        }
+    }
+    else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
+        // パラシュート開放
+        servoManager->moveLeft();
+
+        // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
+        if(sensorManager->isTouchDown()) {
+            DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
+            updateStatus(config->statusFlags | TOUCH_DOWN);
+        }
+    }
+    else if(config->statusFlags & FALLING) { // 落下中
+
+        // 開放高度に達したら OPEN_PARA に遷移
+        if(sensorManager->isOkToDeployParachute()) {
+            DEBUG_PRINT("FALLING->OPEN_PARA\r\n");
+            updateStatus(config->statusFlags | OPEN_PARA);
+        }
+    }
+    else if(config->statusFlags & FLYING) { // 飛行中
+        //TODO: ロギング開始
+
+        //高度が減少に転じたら FALLING に遷移
+        if(sensorManager->isFalling()) {
+            DEBUG_PRINT("FLYING->FALLING\r\n");
+            updateStatus(config->statusFlags | FALLING);
+        }
+    }
+    else if(config->statusFlags & STAND_BY) { //
+        // 規定高度に達したら FLYING に遷移
+        if(sensorManager->isFlying()) {
+            DEBUG_PRINT("STAND_BY->FLYING\r\n");
+            updateStatus(config->statusFlags | FLYING);
+        }
+    }
+    else if(config->statusFlags & INIT) {
+        // センサ開始したら STAND_BY に遷移
+        if(startSensor() == RESULT_OK) {
+            DEBUG_PRINT("INIT->STAND_BY\r\n");
+            updateStatus(config->statusFlags | STAND_BY);
+        }
+    }
+}
+
+/**
  * BUTTONS
  */
 
@@ -874,14 +907,33 @@ static void changeServoState()
 }
 
 // 地上の高度をセットする
-static void setCurrentAltitude()
+static void setGroundAltitude()
 {
-    DEBUG_PRINT("setAltitude()\r\n");
+    DEBUG_PRINT("setGroundAltitude()\r\n");
 
     if(sensorManager != NULL)
     {
         // 地表高度設定
         sensorManager->calculateGroundAltitude();
+    }
+}
+
+// プローブを開始する
+static void setProbeStatusAsInit()
+{
+    updateStatus(config->statusFlags | INIT);
+}
+
+/**
+ * LED
+ */
+void blinkLED() {
+
+    for (uint8_t i=0; i<ledBlinkCount; i++) {
+        led->write(1); // led on
+        wait(0.1);
+        led->write(0); // led off
+        wait(0.1);
     }
 }
 
