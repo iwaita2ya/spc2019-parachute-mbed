@@ -247,7 +247,7 @@ int main() {
         else if(config->statusFlags & TOUCH_DOWN) { // 着地
             // システム停止
             if(stopSensor() == RESULT_OK) {
-                DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
+                //DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
                 updateStatus(config->statusFlags | FINISH);
             }
         }
@@ -257,7 +257,7 @@ int main() {
 
             // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
             if(sensorManager->isTouchDown()) {
-                DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
+                //DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
                 updateStatus(config->statusFlags | TOUCH_DOWN);
             }
         }
@@ -265,7 +265,7 @@ int main() {
 
             // 開放高度に達したら OPEN_PARA に遷移
             if(sensorManager->isOkToDeployParachute()) {
-                DEBUG_PRINT("FALLING->OPEN_PARA\r\n");
+                //DEBUG_PRINT("FALLING->OPEN_PARA\r\n");
                 updateStatus(config->statusFlags | OPEN_PARA);
             }
         }
@@ -274,21 +274,21 @@ int main() {
 
             //高度が減少に転じたら FALLING に遷移
             if(sensorManager->isFalling()) {
-                DEBUG_PRINT("FLYING->FALLING\r\n");
+                //DEBUG_PRINT("FLYING->FALLING\r\n");
                 updateStatus(config->statusFlags | FALLING);
             }
         }
         else if(config->statusFlags & STAND_BY) { //
             // 規定高度に達したら FLYING に遷移
             if(sensorManager->isFlying()) {
-                DEBUG_PRINT("STAND_BY->FLYING\r\n");
+                //DEBUG_PRINT("STAND_BY->FLYING\r\n");
                 updateStatus(config->statusFlags | FLYING);
             }
         }
         else if(config->statusFlags & INIT) {
             // センサ開始したら STAND_BY に遷移
             if(startSensor() == RESULT_OK) {
-                DEBUG_PRINT("INIT->STAND_BY\r\n");
+                //DEBUG_PRINT("INIT->STAND_BY\r\n");
                 updateStatus(config->statusFlags | STAND_BY);
             }
         }
@@ -933,24 +933,14 @@ void printSensorValuesReadable() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
-    DEBUG_PRINT("changeServoState()\r\n");
-
-    if(servoManager != NULL)
-    {
-        servoManager->flipState();
-    }
+    servoManager->flipState();
 }
 
 // 地上の高度をセットする
 static void setGroundAltitude()
 {
-    DEBUG_PRINT("setGroundAltitude()\r\n");
-
-    if(sensorManager != NULL)
-    {
-        // 地表高度設定
-        sensorManager->calculateGroundAltitude();
-    }
+    // 地表高度設定
+    sensorManager->calculateGroundAltitude();
 }
 
 // プローブを開始する
