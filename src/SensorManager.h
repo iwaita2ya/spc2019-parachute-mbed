@@ -19,7 +19,6 @@ namespace greysound {
 
         int activeTimeMs;
         float currentPressure;      // 現在の気圧
-        float currentAltitude;      // 現在の高度
         float currentTemperature;   // 現在の気温
         uint8_t maxAltitude;            // 最大到達高度
         uint8_t altitudeThreshold;      // 状態遷移に必要な高度しきい値
@@ -58,7 +57,6 @@ namespace greysound {
 
             // 変数初期化
             currentPressure = 0.0f;
-            currentAltitude = 0.0f;
             currentTemperature = 0.0f;
             maxAltitude = 0;
             altitudeThreshold = systemParams->altitudeThreshold;
@@ -165,30 +163,30 @@ namespace greysound {
             activeTimeMs = activeTimer->read_ms();
 
             // 現在高度を取得
-            currentAltitude = ms5607->getAltitude();
+            params->currentAltitude = ms5607->getAltitude();
 
             // 現在高度が最大到達高度を上回っていたら更新
-            if (currentAltitude > maxAltitude) {
-                maxAltitude = (uint8_t) currentAltitude;
+            if (params->currentAltitude > maxAltitude) {
+                maxAltitude = (uint8_t) params->currentAltitude;
             }
 
             // 飛行状態チェック：現在高度が地上高度を 2.0m 以上上回っている場合はカウントアップ
-            if(currentAltitude > (params->groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
+            if(params->currentAltitude > (params->groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
                 flyingAltitudeCounter++;
             }
 
             // 落下状態チェック：最大到達高度より 2.0m 以上降下していたらカウントアップ
-            if((currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
+            if((params->currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
                 fallingAltitudeCounter++;
             }
 
             // パラシュート開放チェック：落下状態で、現在高度がパラシュート開放高度を下回った場合はカウントアップ
-            if(isFalling() && currentAltitude < (params->groundAltitude + deployParachuteAt) && deployAltitudeCounter < counterThreshold) {
+            if(isFalling() && params->currentAltitude < (params->groundAltitude + deployParachuteAt) && deployAltitudeCounter < counterThreshold) {
                 deployAltitudeCounter++;
             }
 
             // 着地状態チェック：飛行状態で、現在高度が 地上高度+2.0m 以下の場合はカウントアップ
-            if(isFalling() && currentAltitude < (params->groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
+            if(isFalling() && params->currentAltitude < (params->groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
                 touchDownCounter++;
             }
 
@@ -206,7 +204,7 @@ namespace greysound {
         {
             // ms5607
             currentPressure = ms5607->getPressure();
-            currentAltitude = ms5607->getAltitude();
+            params->currentAltitude = (uint8_t) ms5607->getAltitude((int)currentPressure);
             currentTemperature = ms5607->getTemperature();
         }
 

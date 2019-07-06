@@ -22,6 +22,7 @@ class ServoManager {
 //#define MAX_VALUE 0.101f
 
 //マイクロサーボ　SG92R: 0.5ms-2.4ms
+#define SERVO_PERIOD 0.020f
 #define MIN_VALUE 0.025f
 #define MAX_VALUE 0.120f
 
@@ -39,6 +40,7 @@ class ServoManager {
             minValue = MIN_VALUE;
             maxValue = MAX_VALUE;
             servo = new PwmOut(control);
+            servo->period(SERVO_PERIOD);
         }
 
         /**
@@ -50,9 +52,6 @@ class ServoManager {
 
         void init()
         {
-            // set period
-            servo->period(PERIOD_FUTABA);
-
             // move to "close" position
             servo->write(minValue);   // 1.02ms(0.051f) < 1.52ms(0.076f) > 2.02ms(0.101f)
             //_servo.pulsewidth(0.00152f);   // alternative to led.write, set duty cycle time in seconds

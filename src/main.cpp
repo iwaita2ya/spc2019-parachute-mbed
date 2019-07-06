@@ -75,7 +75,7 @@ char txLineBuffer[80];
 char rxLineBuffer[80];
 
 #ifdef DEBUG
-#define DEBUG_PRINT(x)  serial->printf(x)
+#define DEBUG_PRINT(x) serial->printf(x)
 #else
 #define DEBUG_PRINT(x)
 #endif
@@ -119,17 +119,18 @@ DigitalIn *enableSerialPin;
  * SRAM
  * 0x0000        uint8_t  ステータスフラグ格納領域
  * 0x0001-0x0004 float    海抜0mの気圧 (hPa)
- * 0x0005-0x0008 float    地上の気圧 (hPa)
- * 0x0009        uint8_t  上空判定 (0-255m)
- * 0x000A        uint8_t  開放判定 (0-255m)
- * 0x000B-0x000E float    サーボ周期 Futaba:20ms(0.020f)
- * 0x000F-0x0012 float    サーボ開 duty比 (0-1.0f)
- * 0x0013-0x0016 float    サーボ閉 duty比 (0-1.0f)
- * 0x0017        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
- * 0x0018-0x001B time_t   ロギング開始時刻(RTCから取得する）
- * 0x001C-0x001D uint16_t 最終ログ格納アドレス (0x0021-0x0800)
- * 0x001E-0x001F          (予備)
- * 0x0021-0x0800          ログデータ格納領域
+ * 0x0005-0x0006 uint16_t 地表の高度 (0-65536m)
+ * 0x0007-0x0008 uint16_t 現在の高度 (0-65536m)
+ * 0x0009        uint8_t  パラシュート開放高度(地表高度に加算) (0-256m)
+ * 0x000A        uint8_t  状態カウンタしきい値 (0-255回)
+ * 0x000B        uint8_t  状態遷移に必要な高度しきい値 (0-255回)
+ * 0x000C-0x000F float    サーボ開 duty比 (0-1.0f)
+ * 0x0010-0x0013 float    サーボ閉 duty比 (0-1.0f)
+ * 0x0014        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
+ * 0x0015-0x0018 time_t   ロギング開始時刻(RTCから取得する）
+ * 0x0019-0x001A uint16_t 最終ログ格納アドレス (0x0020-0x0800)
+ * 0x001B-0x001F (予備)
+ * 0x0020-0x0800          ログデータ格納領域
  */
 SerialSRAM *sram;
 
@@ -207,16 +208,15 @@ int main() {
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
     config = new SystemParameters();
     resetConfig(); //MEMO: 起動時に一部データが欠落することに対する暫定措置
-//    loadConfig();
+//    loadConfig(); //MEMO: 本当はこっちを呼びたい
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
-    servoManager->setPeriod(config->servoPeriod);
     servoManager->setRange(config->closeServoPeriod, config->openServoPeriod); // minValue, maxValue
     servoManager->init();
     servoManager->moveRight(); // open
 
-    // getStandBy SensorManager (and Ticker)
+    // getStandBy SensorManager (and Ticker)`
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
     sensorManager->calculateGroundAltitude(); //MEMO: テスト用暫定措置。動作確認が取れたらコメントアウト
@@ -252,6 +252,9 @@ int main() {
      */
     while(shouldLoop == 1) {
 
+//        sensorManager->updateForced(); // センサー値を更新する
+//        printConfigVars(); //変数設定表示 (hex)
+
         /**
          * シリアル通信の受送信処理
          * 受信データの最初の1バイトがコマンドバイト(CB)なのでその値をチェックして処理を分岐
@@ -281,7 +284,7 @@ int main() {
                     case 0x40: // SRAM 設定表示 (hex)
                         printConfigSRAM();
                         break;
-                    case 0x41: // SRAM 設定表示 (hex)
+                    case 0x41: // SRAM 設定表示 (ascii)
                         printConfigSRAMReadable();
                         break;
                     case 0x50: // 変数設定表示 (hex)
@@ -304,7 +307,7 @@ int main() {
                     case 0x80: //TODO: ログ取得
                         break;
                     case 0x90: // ログデータ消去
-                        clearLog(); //TODO: テスト
+                        clearLog();
                         break;
                     case 0xA0: // メモリダンプ　(hex)
                         dumpMemory();
@@ -329,6 +332,12 @@ int main() {
                 }
             }
         }
+
+        // blink LED
+        for (uint8_t i=0; i<ledBlinkCount; i++) {
+            led->write(!(led->read()));
+        }
+        wait(0.5);
     }
 
     /**
@@ -582,22 +591,31 @@ void printConfigSRAMReadable() {
  */
 void printConfigVars() {
 
-    char charValue[sizeof(float)];
+    unsigned char charValue[sizeof(float)];
     uint8_t i;
 
-    serial->putc(config->statusFlags); // status
-    memcpy(charValue, &config->pressureAtSeaLevel, sizeof(float));  // pressure at 0m
+    serial->putc(config->statusFlags); // ステータスフラグ
+    memcpy(charValue, &config->pressureAtSeaLevel, sizeof(float));  // 海抜0mの気圧
     for(i=0;i<sizeof(float);i++) {
         serial->putc(charValue[i]);
     }
-    serial->putc(config->groundAltitude);                           // ground alt.
+
+    memcpy(charValue, &sensorManager->currentPressure, sizeof(float)); // 現在の気圧
+    for(i=0;i<sizeof(float);i++) {
+        serial->putc(charValue[i]);
+    }
+
+    memcpy(charValue, &config->groundAltitude, sizeof(uint16_t));   // 地上高度
+    for(i=0;i<sizeof(uint16_t);i++) {
+        serial->putc(charValue[i]);
+    }
+    memcpy(charValue, &config->currentAltitude, sizeof(uint16_t));  // 現在高度
+    for(i=0;i<sizeof(uint16_t);i++) {
+        serial->putc(charValue[i]);
+    }
+    serial->putc(config->deployParachuteAt);                        // パラシュート開放高度
     serial->putc(config->counterThreshold);                         // counter threshold
     serial->putc(config->altitudeThreshold);                        // altitude threshold
-    serial->putc(config->deployParachuteAt);                        // deploy parachute at
-    memcpy(charValue, &config->servoPeriod, sizeof(float));         // servo period
-    for(i=0;i<sizeof(float);i++) {
-        serial->putc(charValue[i]);
-    }
     memcpy(charValue, &config->openServoPeriod, sizeof(float));     // open servo period
     for(i=0;i<sizeof(float);i++) {
         serial->putc(charValue[i]);
@@ -608,11 +626,11 @@ void printConfigVars() {
     }
     serial->putc(config->enableLogging);                            // logging enable/disable
     memcpy(charValue, &config->logStartTime, sizeof(time_t));       // logging started time
-    for(i=0;i<sizeof(float);i++) {
+    for(i=0;i<sizeof(time_t);i++) {
         serial->putc(charValue[i]);
     }
     memcpy(charValue, &config->lastLogAddress, sizeof(uint16_t));   // latest log pointer
-    for(i=0;i<sizeof(float);i++) {
+    for(i=0;i<sizeof(uint16_t);i++) {
         serial->putc(charValue[i]);
     }
 }
@@ -639,10 +657,10 @@ void printConfigVarsReadable() {
 
     serial->printf("Pressure At Sea Lv : %d Pa\r\n", (uint32_t) config->pressureAtSeaLevel);
     serial->printf("Ground Altitude    : %d m\r\n", config->groundAltitude);
-    serial->printf("Counter Threshold  : %d\r\n", config->counterThreshold);
-    serial->printf("Altitude Threshold : %d m\r\n", config->altitudeThreshold);
+    serial->printf("Current Altitude   : %d m\r\n", config->currentAltitude);
     serial->printf("Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
-    serial->printf("Servo Period       : %d ms\r\n", (uint32_t) (config->servoPeriod * 1000));
+    serial->printf("Counter Threshold  : %d times\r\n", config->counterThreshold);
+    serial->printf("Altitude Threshold : %d times\r\n", config->altitudeThreshold);
     serial->printf("Open Servo         : %d ms\r\n", (uint32_t) (config->openServoPeriod * 1000));
     serial->printf("Close Servo        : %d ms\r\n", (uint32_t) (config->closeServoPeriod * 1000));
     serial->printf("Enable Logging     : %d\r\n", config->enableLogging);
@@ -660,22 +678,38 @@ void loadConfig() {
 
     sram->read(0x0000, (char*)buffer, CONFIG_AREA_SIZE); // read 0x0000-0x0020
 
+    /**
+     * 0x0000        uint8_t  ステータスフラグ格納領域
+     * 0x0001-0x0004 float    海抜0mの気圧 (hPa)
+     * 0x0005-0x0006 uint16_t 地表の高度 (0-65536m)
+     * 0x0007-0x0008 uint16_t 現在の高度 (0-65536m)
+     * 0x0009        uint8_t  パラシュート開放高度(地表高度に加算) (0-256m)
+     * 0x000A        uint8_t  状態カウンタしきい値 (0-255回)
+     * 0x000B        uint8_t  状態遷移に必要な高度しきい値 (0-255回)
+     * 0x000C-0x000F float    サーボ開 duty比 (0-1.0f)
+     * 0x0010-0x0013 float    サーボ閉 duty比 (0-1.0f)
+     * 0x0014        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
+     * 0x0015-0x0018 time_t   ロギング開始時刻(RTCから取得する）
+     * 0x0019-0x001A uint16_t 最終ログ格納アドレス (0x0020-0x0800)
+     * 0x001B-0x001F (予備)
+     * 0x0020-0x0800          ログデータ格納領域
+     */
+
     config->statusFlags        = (uint8_t) buffer[0];
     uint32Value = (buffer[4] << 24 | buffer[3] << 16 | buffer[2] << 8 | buffer[1]);
     config->pressureAtSeaLevel = *(float*)&uint32Value;
-    config->groundAltitude     = (uint8_t) buffer[5];
-    config->counterThreshold   = (uint8_t) buffer[6];
-    config->altitudeThreshold  = (uint8_t) buffer[7];
-    config->deployParachuteAt  = (uint8_t) buffer[8];
-    uint32Value = (buffer[12] << 24 | buffer[11] << 16 | buffer[10] << 8 | buffer[9]);
-    config->servoPeriod        = *(float*)&uint32Value;
-    uint32Value = (buffer[16] << 24 | buffer[15] << 15 | buffer[14] << 8 | buffer[13]);
+    config->groundAltitude     = (uint16_t) (buffer[6] << 8 | buffer[5]);
+    config->currentAltitude    = (uint16_t) (buffer[8] << 8 | buffer[7]);
+    config->deployParachuteAt  = (uint8_t) buffer[9];
+    config->counterThreshold   = (uint8_t) buffer[10];
+    config->altitudeThreshold  = (uint8_t) buffer[11];
+    uint32Value = (buffer[15] << 24 | buffer[14] << 15 | buffer[13] << 8 | buffer[12]);
     config->openServoPeriod      = *(float*)&uint32Value;
-    uint32Value = (buffer[20] << 24 | buffer[19] << 16 | buffer[18] << 8 | buffer[17]);
+    uint32Value = (buffer[19] << 24 | buffer[18] << 16 | buffer[17] << 8 | buffer[16]);
     config->closeServoPeriod     = *(float*)&uint32Value;;
-    config->enableLogging      = (uint8_t) buffer[21];
-    config->logStartTime       = (time_t) (buffer[25] << 24 | buffer[24] << 16 | buffer[23] << 8 | buffer[22]);
-    config->lastLogAddress     = (uint16_t) (buffer[26] << 8 | buffer[27]);
+    config->enableLogging      = (uint8_t) buffer[20];
+    config->logStartTime       = (time_t) (buffer[24] << 24 | buffer[23] << 16 | buffer[22] << 8 | buffer[21]);
+    config->lastLogAddress     = (uint16_t) (buffer[26] << 8 | buffer[25]);
 
     delete[] buffer;
 }
@@ -687,24 +721,42 @@ void saveConfig() {
 
     char charValue[sizeof(float)];
 
+    /**
+     * 0x0000        uint8_t  ステータスフラグ格納領域
+     * 0x0001-0x0004 float    海抜0mの気圧 (hPa)
+     * 0x0005-0x0006 uint16_t 地表の高度 (0-65536m)
+     * 0x0007-0x0008 uint16_t 現在の高度 (0-65536m)
+     * 0x0009        uint8_t  パラシュート開放高度(地表高度に加算) (0-256m)
+     * 0x000A        uint8_t  状態カウンタしきい値 (0-255回)
+     * 0x000B        uint8_t  状態遷移に必要な高度しきい値 (0-255回)
+     * 0x000C-0x000F float    サーボ開 duty比 (0-1.0f)
+     * 0x0010-0x0013 float    サーボ閉 duty比 (0-1.0f)
+     * 0x0014        uint8_t  ロギング設定 (0x00:無効 0x01:有効)
+     * 0x0015-0x0018 time_t   ロギング開始時刻(RTCから取得する）
+     * 0x0019-0x001A uint16_t 最終ログ格納アドレス (0x0020-0x0800)
+     * 0x001B-0x001F (予備)
+     * 0x0020-0x0800          ログデータ格納領域
+     */
+
     sram->write(0x0000, config->statusFlags);
     memcpy(charValue, &config->pressureAtSeaLevel, sizeof(float));
     sram->write(0x0001, charValue, sizeof(float));
-    sram->write(0x0005, config->groundAltitude);
-    sram->write(0x0006, config->counterThreshold);
-    sram->write(0x0007, config->altitudeThreshold);
-    sram->write(0x0008, config->deployParachuteAt);
-    memcpy(charValue, &config->servoPeriod, sizeof(float));
-    sram->write(0x0009, charValue, sizeof(float));
+    memcpy(charValue, &config->groundAltitude, sizeof(uint16_t));
+    sram->write(0x0005, charValue, sizeof(uint16_t));
+    memcpy(charValue, &config->currentAltitude, sizeof(uint16_t));
+    sram->write(0x0007, charValue, sizeof(uint16_t));
+    sram->write(0x0009, config->deployParachuteAt);
+    sram->write(0x000A, config->counterThreshold);
+    sram->write(0x000B, config->altitudeThreshold);
     memcpy(charValue, &config->openServoPeriod, sizeof(float));
-    sram->write(0x000D, charValue, sizeof(float));
+    sram->write(0x000C, charValue, sizeof(float));
     memcpy(charValue, &config->closeServoPeriod, sizeof(float));
-    sram->write(0x0011, charValue, sizeof(float));
-    sram->write(0x0015, config->enableLogging);
+    sram->write(0x0010, charValue, sizeof(float));
+    sram->write(0x0014, config->enableLogging);
     memcpy(charValue, &config->logStartTime, sizeof(time_t));
-    sram->write(0x0016, charValue, sizeof(time_t));
+    sram->write(0x0015, charValue, sizeof(time_t));
     memcpy(charValue, &config->lastLogAddress, sizeof(uint16_t));
-    sram->write(0x001B, charValue, sizeof(uint16_t));
+    sram->write(0x0019, charValue, sizeof(uint16_t));
 }
 
 /**
@@ -714,12 +766,12 @@ void resetConfig() {
 
     // getStandBy config with default value
     config->statusFlags         = 0x00;      // ステータスフラグ
-    config->pressureAtSeaLevel  = 100000.0f; // 海抜0mの大気圧
+    config->pressureAtSeaLevel  = 101280.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
     config->groundAltitude      = 34;        // 地表高度
-    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この値に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 3;         // 状態遷移に必要な高度しきい値
-    config->deployParachuteAt   = 30;        // パラシュート開放高度(m)(地表高度に加算する)
-    config->servoPeriod         = 0.020f;    // 20 ms
+    config->currentAltitude     = 34;        // 現在高度
+    config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
+    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
+    config->altitudeThreshold   = 3;         // 状態遷移に必要な高度に達したと判定する回数しきい値
     config->openServoPeriod     = 0.037f;    // 0-1.0f
     config->closeServoPeriod    = 0.03f;     // 0-1.0f
     config->enableLogging       = 0x01;      // 0x01:true 0x00:false
@@ -796,18 +848,27 @@ void printSensorValues() {
 
         uint8_t i;
 
+        // センサ値更新
         sensorManager->updateForced();
 
         // バイナリデータとして書き出す
         char charValue[sizeof(float)];
+
+        memcpy(charValue, &config->pressureAtSeaLevel, sizeof(float)); // Pressure at Sea Level (0m)
+        for(i=0;i<sizeof(float);i++) {
+            serial->putc(charValue[i]);
+        }
+
         memcpy(charValue, &sensorManager->currentPressure, sizeof(float)); // Current Pressure
         for(i=0;i<sizeof(float);i++) {
             serial->putc(charValue[i]);
         }
-        memcpy(charValue, &sensorManager->currentAltitude, sizeof(float)); // Current Altitude
-        for(i=0;i<sizeof(float);i++) {
+
+        memcpy(charValue, &config->currentAltitude, sizeof(uint16_t)); // Current Altitude
+        for(i=0;i<sizeof(uint16_t);i++) {
             serial->putc(charValue[i]);
         }
+
         memcpy(charValue, &sensorManager->currentTemperature, sizeof(float)); // Current Temperature
         for(i=0;i<sizeof(float);i++) {
             serial->putc(charValue[i]);
@@ -825,7 +886,8 @@ void printSensorValuesReadable() {
 
         serial->printf("SeaLev P: %d\r\n", (uint32_t)(config->pressureAtSeaLevel));     // Pa: 100Pa=1hPa
         serial->printf("CurrentP: %d\r\n", (uint32_t)(sensorManager->currentPressure)); // Pa: 100Pa=1hPa
-        serial->printf("ALT(x10): %d\r\n", (uint16_t)x10(sensorManager->currentAltitude));
+        serial->printf("Gnd Alt : %u\r\n", config->groundAltitude);
+        serial->printf("Cur Alt : %u\r\n", config->currentAltitude);
         serial->printf("TMP(x10): %d\r\n", (uint16_t)x10(sensorManager->currentTemperature));
     }
 }
