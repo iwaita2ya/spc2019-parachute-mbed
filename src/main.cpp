@@ -157,8 +157,11 @@ static void changeServoState();         // open/close servo
 // ----- ALTIMETER -----
 static void setGroundAltitude();
 
-// ----- Start Probe -----
-static void setProbeStatusAsInit();
+// ----- Start Device -----
+static void startDevice();
+
+// ----- Reset Device -----
+static void resetDevice();
 
 // ----- Sensor -----
 static uint8_t startSensor();
@@ -199,13 +202,11 @@ int main() {
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
     servoManager->setRange(config->closeServoPeriod, config->openServoPeriod); // minValue, maxValue
-    servoManager->init();
-    servoManager->moveRight(); // open
+    //servoManager->init(); //MEMO: 不要では？
 
     // getStandBy SensorManager (and Ticker)`
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
-    sensorManager->calculateGroundAltitude(); //MEMO: テスト用暫定措置。動作確認が取れたらコメントアウト
 
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
@@ -218,9 +219,9 @@ int main() {
     servoControlPin->fall(&changeServoState);
 
     // Init Probe Buttons
-    initProbePin = new InterruptIn(P0_17);     // プローブ開始ボタン
+    initProbePin = new InterruptIn(P0_17);     // デバイス開始ボタン
     initProbePin->mode(PullUp);
-    initProbePin->fall(&setProbeStatusAsInit);
+    initProbePin->fall(&startDevice);
 
     // LED 点滅開始
     ledBlinkCount = 1;
@@ -231,10 +232,6 @@ int main() {
      * Main Loop
      */
     while(shouldLoop == 1) {
-
-        // MEMO: DEBUG用
-        sensorManager->updateForced(); // センサー値を更新する
-        printConfigVars(); //変数設定表示 (hex)
 
         /**
         * プローブステータスに応じて処理を分岐
@@ -363,7 +360,13 @@ int main() {
                         servoManager->flipState();
                         break;
                     case 0xF0: // 地表高度設定
-                        sensorManager->calculateGroundAltitude();
+                        setGroundAltitude();
+                        break;
+                    case 0xF1: // デバイス開始
+                        startDevice();
+                        break;
+                    case 0xF2: // デバイス初期化
+                        resetDevice();
                         break;
                     default:
                         break;
@@ -692,9 +695,9 @@ void printConfigVarsReadable() {
     serial->printf("Pressure At Sea Lv : %d Pa\r\n", (uint32_t) config->pressureAtSeaLevel);
     serial->printf("Ground Altitude    : %d m\r\n", config->groundAltitude);
     serial->printf("Current Altitude   : %d m\r\n", config->currentAltitude);
-    serial->printf("Deploy Parachute At: %d m\r\n", config->deployParachuteAt);
+    serial->printf("Deploy Parachute At: +%d m\r\n", config->deployParachuteAt);
     serial->printf("Counter Threshold  : %d times\r\n", config->counterThreshold);
-    serial->printf("Altitude Threshold : %d times\r\n", config->altitudeThreshold);
+    serial->printf("Altitude Threshold : +%d m\r\n", config->altitudeThreshold);
     serial->printf("Open Servo         : %d ms\r\n", (uint32_t) (config->openServoPeriod * 1000));
     serial->printf("Close Servo        : %d ms\r\n", (uint32_t) (config->closeServoPeriod * 1000));
     serial->printf("Enable Logging     : %d\r\n", config->enableLogging);
@@ -800,7 +803,7 @@ void resetConfig() {
 
     // getStandBy config with default value
     config->statusFlags         = 0x00;      // ステータスフラグ
-    config->pressureAtSeaLevel  = 101280.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
+    config->pressureAtSeaLevel  = 101440.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
     config->groundAltitude      = 34;        // 地表高度
     config->currentAltitude     = 34;        // 現在高度
     config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
@@ -812,6 +815,7 @@ void resetConfig() {
     config->logStartTime        = 0x01020304;
     config->lastLogAddress      = 0x0021;    // 0x0021-0x0800
 
+    // SRAM に保存
     saveConfig();
 }
 
@@ -941,12 +945,22 @@ static void setGroundAltitude()
 {
     // 地表高度設定
     sensorManager->calculateGroundAltitude();
+
+    // SRAM に保存
+    saveConfig();
 }
 
 // プローブを開始する
-static void setProbeStatusAsInit()
+static void startDevice()
 {
     updateStatus(config->statusFlags | INIT);
+}
+
+// プローブを開始する
+static void resetDevice()
+{
+    resetConfig();              // 設定初期化
+    servoManager->moveRight();  // サーボ開放
 }
 
 /**

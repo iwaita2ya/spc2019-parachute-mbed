@@ -50,6 +50,7 @@ class ServoManager {
             delete(servo);
         }
 
+        //MEMO: 今のところ必要性を感じていない
         void init()
         {
             // move to "close" position
