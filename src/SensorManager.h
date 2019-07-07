@@ -89,23 +89,29 @@ namespace greysound {
         }
 
         /**
-         * 現在の高度を地表高度として設定し、それを基に開放高度を設定する
+         * 現在高度のサンプリングを行い、その結果を地表高度として設定する。
          * MEMO: 機体が地上に設置されている状態で呼ばれる前提なので、飛行中の実行はNGです。
          * @return
          */
         uint8_t calculateGroundAltitude()
         {
             const uint8_t numberOfSamples = 8;
-            float groundAltitudeSamples = 0.0f;
+            float pressureSamples = 0.0;
 
             // 現在高度をサンプリングする
             for (uint8_t i = 0; i<numberOfSamples; i++) {
-                groundAltitudeSamples += ms5607->getAltitude();
+                pressureSamples += ms5607->getPressure();
                 wait(0.1);
             }
 
-            // 現在高度の平均値を地表高度として設定する
-            params->groundAltitude = (uint8_t)(groundAltitudeSamples / numberOfSamples);
+            // 現在の気圧を平均値から求める
+            currentPressure = (pressureSamples / numberOfSamples);
+
+            // 現在高度を気圧から求める
+            params->currentAltitude = (uint8_t)(ms5607->getAltitude((int)currentPressure));
+
+            // 現在高度を地表高度として設定する
+            params->groundAltitude = params->currentAltitude;
 
             return 0;
         }
