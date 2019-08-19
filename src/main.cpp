@@ -16,6 +16,8 @@
 #include "SensorManager.h"
 
 #define CONFIG_AREA_SIZE 0x20   // 0x00-0x20
+#define CONFIG_LOG_SIZE 0x02    // Status + Altitude = 2byte
+#define SRAM_LOG_START_AT 0x0020    // Status + Altitude = 2byte
 #define SRAM_MAX_SIZE 0x0800    // 0x0000-0x0800
 #define SENSOR_UPDATE_FREQ 0.1  // センサ更新頻度
 
@@ -73,9 +75,11 @@ char txLineBuffer[80];
 char rxLineBuffer[80];
 
 #ifdef DEBUG
-#define DEBUG_PRINT(x) serial->printf(x)
+#define DEBUG_PRINT(fmt, ...) serial->printf(fmt, __VA_ARGS__)
+#define DEBUG_PUTC(x) serial->putc(x)
 #else
-#define DEBUG_PRINT(x)
+#define DEBUG_PRINT(fmt, ...)
+#define DEBUG_PUTC(x)
 #endif
 
 /**
@@ -94,13 +98,13 @@ Ticker *sensorTicker;   // センサ更新タイマ
  */
 InterruptIn *setAltitudePin;    // 地表高度セットトリガ
 InterruptIn *servoControlPin;   // パラシュートロック／アンロックトリガ
-InterruptIn *initProbePin;      // プローブ初期化信号
+InterruptIn *initProbePin;      // 開始信号
 
 /**
- * LED
+ * Digital Out
  */
 DigitalOut *led; // LED
-uint8_t ledBlinkCount;
+DigitalOut *falling; // set low if falling
 
 /**
  * Jumper
@@ -146,10 +150,26 @@ void printConfigVars();                 // get config data from SRAM (hex)
 void printConfigVarsReadable();         // get config data from SRAM (ascii)
 void loadConfig();                      // load config data from SRAM to Vars
 void saveConfig();                      // Save config data onto SRAM
+/**
+ * config->statusFlags         = 0x00;      // ステータスフラグ
+ * config->pressureAtSeaLevel  = 101440.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
+ * config->groundAltitude      = 0;        // 地表高度
+ * config->currentAltitude     = 0;        // 現在高度
+ * config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
+ * config->counterThreshold    = 3;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
+ * config->altitudeThreshold   = 20;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
+ * config->openServoPeriod     = 0.039f;    // 0-1.0f // close
+ * config->closeServoPeriod    = 0.030f;     // 0-1.0f
+ * config->enableLogging       = 0x00;      // 0x01:true 0x00:false
+ * config->logStartTime        = 0x01020304;
+ * config->logPointer          = SRAM_LOG_START_AT;    // 0x0021-0x0800
+ */
+void updateConfig();
 void resetConfig();                     // Init config with default value (and save onto SRAM)
 void dumpMemory();                      // dump all data in SRAM (hex)
 void dumpMemoryReadable();              // dump all data in SRAM (ascii)
 void clearLog(uint16_t startAddress=CONFIG_AREA_SIZE, uint16_t endAddress=SRAM_MAX_SIZE); // clear logged data
+void writeCurrentData(uint8_t currentStatus, uint8_t currentAltitude);
 
 // ----- SERVO -----
 static void changeServoState();         // open/close servo
@@ -186,18 +206,20 @@ int main() {
     enableSerialPin = new DigitalIn(P1_15);
     enableSerialPin->mode(PullUp);
 
-    // getStandBy serial baud rate
+    // get StandBy serial baud rate
     serial = new RawSerial(P0_19, P0_18); // tx, rx
     serial->baud(115200); // default:9600bps
     // set interrupts for Tx/Rx
     serial->attach(&interruptRx, Serial::RxIrq);
     //serial->attach(&interruptTx, Serial::TxIrq); // not used
 
-    // getStandBy SRAM
+    // get StandBy SRAM
     sram = new SerialSRAM(P0_5, P0_4, P0_21); // sda, scl, hs, A2=0, A1=0
+    sram->setAutoStore(1); // enable auto-store
+
     config = new SystemParameters();
-    resetConfig(); //MEMO: 起動時に一部データが欠落することに対する暫定措置
-//    loadConfig(); //MEMO: 本当はこっちを呼びたい
+    resetConfig(); //MEMO: 設定初期化 (DEBUG ONLY)
+//    loadConfig(); // 設定をSRAMから変数に読込
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -209,22 +231,25 @@ int main() {
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
 
     // Set Altitude Button
-    setAltitudePin = new InterruptIn(P0_20); // 地表高度設定ボタン
+    setAltitudePin = new InterruptIn(P1_19); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
     setAltitudePin->fall(&setGroundAltitude);
 
     // Servo Open/Close Buttons
-    servoControlPin = new InterruptIn(P1_19);// サーボ操作ボタン
+    servoControlPin = new InterruptIn(P0_20);// サーボ操作ボタン
     servoControlPin->mode(PullUp);
     servoControlPin->fall(&changeServoState);
 
     // Init Probe Buttons
-    initProbePin = new InterruptIn(P0_17);     // デバイス開始ボタン
+    initProbePin = new InterruptIn(P0_23);     // デバイス開始ボタン
     initProbePin->mode(PullUp);
     initProbePin->fall(&startDevice);
 
+    // set falling as high
+    falling = new DigitalOut(P0_17);
+    falling->write(1);
+
     // LED 点滅開始
-    ledBlinkCount = 1;
     led = new DigitalOut(P0_7);
     led->write(0); // set led off
 
@@ -244,18 +269,25 @@ int main() {
         else if(config->statusFlags & TOUCH_DOWN) { // 着地
             // システム停止
             if(stopSensor() == RESULT_OK) {
+                // ロギング停止
+                config->enableLogging = false;
+
+                // save data onto EEPROM
+                sram->callHardwareStore();
+
                 //DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
                 updateStatus(config->statusFlags | FINISH);
             }
         }
         else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
             // パラシュート開放
-            servoManager->moveLeft();
+            servoManager->moveRight(); // open
 
             // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
             if(sensorManager->isTouchDown()) {
                 //DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
                 updateStatus(config->statusFlags | TOUCH_DOWN);
+                falling->write(1);
             }
         }
         else if(config->statusFlags & FALLING) { // 落下中
@@ -267,12 +299,11 @@ int main() {
             }
         }
         else if(config->statusFlags & FLYING) { // 飛行中
-            //TODO: ロギング開始
-
             //高度が減少に転じたら FALLING に遷移
             if(sensorManager->isFalling()) {
                 //DEBUG_PRINT("FLYING->FALLING\r\n");
                 updateStatus(config->statusFlags | FALLING);
+                falling->write(0);
             }
         }
         else if(config->statusFlags & STAND_BY) { //
@@ -280,6 +311,8 @@ int main() {
             if(sensorManager->isFlying()) {
                 //DEBUG_PRINT("STAND_BY->FLYING\r\n");
                 updateStatus(config->statusFlags | FLYING);
+                // ロギング開始
+                config->enableLogging = true;
             }
         }
         else if(config->statusFlags & INIT) {
@@ -288,6 +321,11 @@ int main() {
                 //DEBUG_PRINT("INIT->STAND_BY\r\n");
                 updateStatus(config->statusFlags | STAND_BY);
             }
+        }
+
+        // ロギングが有効ならログに記録
+        if(config->enableLogging) {
+            writeCurrentData(config->statusFlags, config->currentAltitude);
         }
 
         /**
@@ -304,18 +342,18 @@ int main() {
                 char commandByte = rxLineBuffer[0];
 
                 switch (commandByte) {
-                    case 0x00: // ステータス表示 (hex)
-                        printStatusSRAM();
-                        break;
-                    case 0x10: // ステータス表示 (ascii)
-                        printStatusVarsReadable();
-                        break;
-                    case 0x20: // ステータス更新
-                        updateStatus(rxLineBuffer[1]);
-                        break;
-                    case 0x30: // ステータス初期化
-                        updateStatus(0x00);
-                        break;
+//                    case 0x00: // ステータス表示 (hex)
+//                        printStatusSRAM();
+//                        break;
+//                    case 0x10: // ステータス表示 (ascii)
+//                        printStatusVarsReadable();
+//                        break;
+//                    case 0x20: // ステータス更新
+//                        updateStatus(rxLineBuffer[1]);
+//                        break;
+//                    case 0x30: // ステータス初期化
+//                        updateStatus(0x00);
+//                        break;
                     case 0x40: // SRAM 設定表示 (hex)
                         printConfigSRAM();
                         break;
@@ -336,14 +374,15 @@ int main() {
                     case 0x71: // 設定をSRAMから読み込む
                         loadConfig();
                         break;
-                    case 0x72: // 設定をSRAMに書き込む
-                        saveConfig();
+//                    case 0x72: // 設定をSRAMに書き込む
+//                        saveConfig();
+//                        break;
+                    case 0x80: // ログ書込
+                        writeCurrentData(config->statusFlags, config->currentAltitude);
                         break;
-                    case 0x80: //TODO: ログ取得
-                        break;
-                    case 0x90: // ログデータ消去
-                        clearLog();
-                        break;
+//                    case 0x90: // ログデータ消去
+//                        clearLog();
+//                        break;
                     case 0xA0: // メモリダンプ　(hex)
                         dumpMemory();
                         break;
@@ -351,11 +390,11 @@ int main() {
                         dumpMemoryReadable();
                         break;
                     case 0xC0: // センサ値取得 (hex)
-                        printSensorValues(); //TODO: テスト
+                        printSensorValues();
                         break;
-                    case 0xD0: // センサ値取得 (ascii)
-                        printSensorValuesReadable();
-                        break;
+//                    case 0xD0: // センサ値取得 (ascii)
+//                        printSensorValuesReadable();
+//                        break;
                     case 0xE0: // サーボ開閉
                         servoManager->flipState();
                         break;
@@ -365,9 +404,9 @@ int main() {
                     case 0xF1: // デバイス開始
                         startDevice();
                         break;
-                    case 0xF2: // デバイス初期化
-                        resetDevice();
-                        break;
+//                    case 0xF2: // デバイス初期化
+//                        resetDevice();
+//                        break;
                     default:
                         break;
                 }
@@ -375,10 +414,8 @@ int main() {
         }
 
         // blink LED
-        for (uint8_t i=0; i<ledBlinkCount; i++) {
-            led->write(!(led->read()));
-        }
-        wait(0.5);
+        led->write(!(led->read()));
+        wait(0.1);
     }
 
     /**
@@ -503,7 +540,7 @@ void dumpMemory() {
     static const uint8_t bufferLength = 16;
     char *buffer = new char[bufferLength];
 
-    for(uint16_t address=0x0000; address<SRAM_MAX_SIZE; address+=bufferLength) {
+    for(uint16_t address=SRAM_LOG_START_AT; address<SRAM_MAX_SIZE; address+=bufferLength) {
 
         // Seq. Read
         sram->read(address, buffer, bufferLength);
@@ -628,7 +665,7 @@ void printConfigSRAMReadable() {
  */
 void printConfigVars() {
 
-    unsigned char charValue[sizeof(float)];
+    unsigned char charValue[sizeof(time_t)];
     uint8_t i;
 
     serial->putc(config->statusFlags); // ステータスフラグ
@@ -666,7 +703,7 @@ void printConfigVars() {
     for(i=0;i<sizeof(time_t);i++) {
         serial->putc(charValue[i]);
     }
-    memcpy(charValue, &config->lastLogAddress, sizeof(uint16_t));   // latest log pointer
+    memcpy(charValue, &config->logPointer, sizeof(uint16_t));       // latest log pointer
     for(i=0;i<sizeof(uint16_t);i++) {
         serial->putc(charValue[i]);
     }
@@ -702,7 +739,7 @@ void printConfigVarsReadable() {
     serial->printf("Close Servo        : %d ms\r\n", (uint32_t) (config->closeServoPeriod * 1000));
     serial->printf("Enable Logging     : %d\r\n", config->enableLogging);
     serial->printf("Last Logged at     : %d\r\n", (uint32_t) config->logStartTime);
-    serial->printf("Last Logged Address: 0x%04X\r\n", config->lastLogAddress);
+    serial->printf("Last Logged Address: 0x%04X\r\n", config->logPointer);
 }
 
 /**
@@ -746,7 +783,7 @@ void loadConfig() {
     config->closeServoPeriod     = *(float*)&uint32Value;;
     config->enableLogging      = (uint8_t) buffer[20];
     config->logStartTime       = (time_t) (buffer[24] << 24 | buffer[23] << 16 | buffer[22] << 8 | buffer[21]);
-    config->lastLogAddress     = (uint16_t) (buffer[26] << 8 | buffer[25]);
+    config->logPointer     = (uint16_t) (buffer[26] << 8 | buffer[25]);
 
     delete[] buffer;
 }
@@ -792,8 +829,11 @@ void saveConfig() {
     sram->write(0x0014, config->enableLogging);
     memcpy(charValue, &config->logStartTime, sizeof(time_t));
     sram->write(0x0015, charValue, sizeof(time_t));
-    memcpy(charValue, &config->lastLogAddress, sizeof(uint16_t));
+    memcpy(charValue, &config->logPointer, sizeof(uint16_t));
     sram->write(0x0019, charValue, sizeof(uint16_t));
+
+    // save data onto EEPROM
+    sram->callHardwareStore();
 }
 
 /**
@@ -804,16 +844,16 @@ void resetConfig() {
     // getStandBy config with default value
     config->statusFlags         = 0x00;      // ステータスフラグ
     config->pressureAtSeaLevel  = 101440.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
-    config->groundAltitude      = 34;        // 地表高度
-    config->currentAltitude     = 34;        // 現在高度
+    config->groundAltitude      = 0;        // 地表高度
+    config->currentAltitude     = 0;        // 現在高度
     config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
-    config->counterThreshold    = 5;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 2;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
-    config->openServoPeriod     = 0.037f;    // 0-1.0f
-    config->closeServoPeriod    = 0.03f;     // 0-1.0f
-    config->enableLogging       = 0x01;      // 0x01:true 0x00:false
+    config->counterThreshold    = 3;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
+    config->altitudeThreshold   = 20;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
+    config->openServoPeriod     = 0.039f;    // 0-1.0f // close
+    config->closeServoPeriod    = 0.030f;     // 0-1.0f
+    config->enableLogging       = 0x00;      // 0x01:true 0x00:false
     config->logStartTime        = 0x01020304;
-    config->lastLogAddress      = 0x0021;    // 0x0021-0x0800
+    config->logPointer          = SRAM_LOG_START_AT;    // 0x0021-0x0800
 
     // SRAM に保存
     saveConfig();
@@ -824,9 +864,40 @@ void resetConfig() {
  */
 void clearLog(uint16_t startAddress, uint16_t endAddress)
 {
+    uint8_t retryCount = 0;
     for (uint16_t i=startAddress; i<endAddress; i++) {
-        sram->write(i, 0x00);
+        retryCount = 0;
+        while(sram->write(i, 0x00) != 0 && retryCount++ < 5) {
+            sram->write(i, 0x00);
+        }
     }
+
+    // reset log pointer
+    config->logPointer = SRAM_LOG_START_AT;
+    sram->write(0x0019, config->logPointer);
+
+    // save data onto EEPROM
+    sram->callHardwareStore();
+}
+
+/**
+ * save current data onto SRAM
+ */
+void writeCurrentData(uint8_t currentStatus, uint8_t currentAltitude) {
+    // if overflow, reset pointer
+    if(config->logPointer + CONFIG_LOG_SIZE > SRAM_MAX_SIZE) {
+        config->logPointer = SRAM_LOG_START_AT;
+    }
+    // write current status
+    sram->write(config->logPointer++, currentStatus);
+
+    // write current altitude
+    sram->write(config->logPointer++, currentAltitude);
+
+    // save current logging pointer
+    char charValue[sizeof(uint16_t)];
+    memcpy(charValue, &config->logPointer, sizeof(uint16_t));
+    sram->write(0x0019, charValue, sizeof(uint16_t));
 }
 
 /**
@@ -937,12 +1008,14 @@ void printSensorValuesReadable() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
+//    DEBUG_PRINT("changeServoState()\r\n");
     servoManager->flipState();
 }
 
 // 地上の高度をセットする
 static void setGroundAltitude()
 {
+//    DEBUG_PRINT("setGroundAltitude()\r\n");
     // 地表高度設定
     sensorManager->calculateGroundAltitude();
 
@@ -950,9 +1023,10 @@ static void setGroundAltitude()
     saveConfig();
 }
 
-// プローブを開始する
+// デバイスを開始する
 static void startDevice()
 {
+//    DEBUG_PRINT("startDevice()\r\n");
     updateStatus(config->statusFlags | INIT);
 }
 
