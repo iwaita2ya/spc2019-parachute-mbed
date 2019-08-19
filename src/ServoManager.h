@@ -84,13 +84,13 @@ class ServoManager {
             return true;
         }
 
-        void moveRight()
+        void moveRight() // open
         {
             flag = 1;
             servo->write(minValue);
         }
 
-        void moveLeft() {
+        void moveLeft() { // close
 
             flag = 0;
             servo->write(maxValue);

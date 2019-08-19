@@ -19,6 +19,7 @@ namespace greysound {
 
         int activeTimeMs;
         float currentPressure;      // 現在の気圧
+
         float currentTemperature;   // 現在の気温
         uint8_t maxAltitude;            // 最大到達高度
         uint8_t altitudeThreshold;      // 状態遷移に必要な高度しきい値
@@ -298,7 +299,6 @@ namespace greysound {
 
             return 0;
         }
-
 
     };
 
