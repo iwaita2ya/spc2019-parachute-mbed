@@ -52,6 +52,11 @@ public:
     uint8_t getAutoStore();
     void setAutoStore(const uint8_t value); //MEMO: 他のメソッドに合わせて uint8_t を返却するべき？
 
+    /**
+     * Hardware Store
+     */
+    uint8_t callHardwareStore();
+
 };
 
 }
