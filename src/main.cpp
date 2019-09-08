@@ -218,8 +218,8 @@ int main() {
     sram->setAutoStore(1); // enable auto-store
 
     config = new SystemParameters();
-    resetConfig(); //MEMO: 設定初期化 (DEBUG ONLY)
-//    loadConfig(); // 設定をSRAMから変数に読込
+//    resetConfig(); //MEMO: 設定初期化 (DEBUG ONLY)
+    loadConfig(); // 設定をSRAMから変数に読込
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
@@ -374,15 +374,15 @@ int main() {
                     case 0x71: // 設定をSRAMから読み込む
                         loadConfig();
                         break;
-//                    case 0x72: // 設定をSRAMに書き込む
-//                        saveConfig();
-//                        break;
+                    case 0x72: // 設定をSRAMに書き込む
+                        saveConfig();
+                        break;
                     case 0x80: // ログ書込
                         writeCurrentData(config->statusFlags, config->currentAltitude);
                         break;
-//                    case 0x90: // ログデータ消去
-//                        clearLog();
-//                        break;
+                    case 0x90: // ログデータ消去
+                        clearLog();
+                        break;
                     case 0xA0: // メモリダンプ　(hex)
                         dumpMemory();
                         break;
@@ -547,6 +547,7 @@ void dumpMemory() {
 
         for(uint8_t i=0; i<bufferLength; i++) {
             serial->putc(buffer[i]);
+            wait_ms(10); // 表示崩れ対策
         }
     }
 
@@ -571,6 +572,7 @@ void dumpMemoryReadable() {
             serial->printf("%02x ", buffer[i]);
         }
         serial->printf("\r\n");
+        wait_ms(100); // 表示崩れ対策
     }
 
     delete[] buffer;
@@ -778,12 +780,12 @@ void loadConfig() {
     config->counterThreshold   = (uint8_t) buffer[10];
     config->altitudeThreshold  = (uint8_t) buffer[11];
     uint32Value = (buffer[15] << 24 | buffer[14] << 15 | buffer[13] << 8 | buffer[12]);
-    config->openServoPeriod      = *(float*)&uint32Value;
+    config->openServoPeriod    = *(float*)&uint32Value;
     uint32Value = (buffer[19] << 24 | buffer[18] << 16 | buffer[17] << 8 | buffer[16]);
-    config->closeServoPeriod     = *(float*)&uint32Value;;
+    config->closeServoPeriod   = *(float*)&uint32Value;;
     config->enableLogging      = (uint8_t) buffer[20];
     config->logStartTime       = (time_t) (buffer[24] << 24 | buffer[23] << 16 | buffer[22] << 8 | buffer[21]);
-    config->logPointer     = (uint16_t) (buffer[26] << 8 | buffer[25]);
+    config->logPointer         = (uint16_t) (buffer[26] << 8 | buffer[25]);
 
     delete[] buffer;
 }
@@ -843,20 +845,23 @@ void resetConfig() {
 
     // getStandBy config with default value
     config->statusFlags         = 0x00;      // ステータスフラグ
-    config->pressureAtSeaLevel  = 101440.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
+    config->pressureAtSeaLevel  = 101448.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
     config->groundAltitude      = 0;        // 地表高度
     config->currentAltitude     = 0;        // 現在高度
     config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
     config->counterThreshold    = 3;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 20;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
-    config->openServoPeriod     = 0.039f;    // 0-1.0f // close
-    config->closeServoPeriod    = 0.030f;     // 0-1.0f
+    config->altitudeThreshold   = 30;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
+    config->openServoPeriod     = 0.041f;    // 0-1.0f // close
+    config->closeServoPeriod    = 0.030f;    // 0-1.0f
     config->enableLogging       = 0x00;      // 0x01:true 0x00:false
     config->logStartTime        = 0x01020304;
     config->logPointer          = SRAM_LOG_START_AT;    // 0x0021-0x0800
 
+    // 地表高度を設定
+    setGroundAltitude();
+
     // SRAM に保存
-    saveConfig();
+//    saveConfig(); //MEMO: setGroundAltitude() で saveConfig() が呼ばれるのでコメントアウト
 }
 
 /**
