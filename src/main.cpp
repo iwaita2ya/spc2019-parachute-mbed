@@ -223,8 +223,7 @@ int main() {
 
     // getStandBy ServoManager
     servoManager = new ServoManager(P0_22);
-    servoManager->setRange(config->closeServoPeriod, config->openServoPeriod); // minValue, maxValue
-    //servoManager->init(); //MEMO: 不要では？
+    servoManager->setRange(config->closeServoPeriod, config->openServoPeriod); // minValue, maxValue //FIXME: 設定値変更時に再度呼ぶ必要がある
 
     // getStandBy SensorManager (and Ticker)`
     sensorTicker  = new Ticker();
@@ -275,8 +274,11 @@ int main() {
                 // save data onto EEPROM
                 sram->callHardwareStore();
 
-                //DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
-                updateStatus(config->statusFlags | FINISH);
+                // センサ停止したら FINISH に遷移
+                if(stopSensor() == RESULT_OK) {
+                    //DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
+                    updateStatus(config->statusFlags | FINISH);
+                }
             }
         }
         else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
@@ -862,6 +864,10 @@ void resetConfig() {
 
     // SRAM に保存
 //    saveConfig(); //MEMO: setGroundAltitude() で saveConfig() が呼ばれるのでコメントアウト
+
+    // サーボの開閉値更新
+    servoManager->setRange(config->closeServoPeriod, config->openServoPeriod);
+
 }
 
 /**
