@@ -719,17 +719,17 @@ void printConfigVarsReadable() {
 
     // status flag
     char statusByte = config->statusFlags;
-    serial->printf("IN ST FL FA OP TD FN ER\r\n");
+    serial->printf("ER FN TD OP FA FL ST IN\r\n");
     serial->printf("-----------------------\r\n");
     serial->printf(" %d  %d  %d  %d  %d  %d  %d  %d\r\n"
-            , ((statusByte & 0x01) ? 1 : 0)
-            , ((statusByte & 0x02) ? 1 : 0)
-            , ((statusByte & 0x04) ? 1 : 0)
-            , ((statusByte & 0x08) ? 1 : 0)
-            , ((statusByte & 0x10) ? 1 : 0)
-            , ((statusByte & 0x20) ? 1 : 0)
-            , ((statusByte & 0x40) ? 1 : 0)
             , ((statusByte & 0x80) ? 1 : 0)
+            , ((statusByte & 0x40) ? 1 : 0)
+            , ((statusByte & 0x20) ? 1 : 0)
+            , ((statusByte & 0x10) ? 1 : 0)
+            , ((statusByte & 0x08) ? 1 : 0)
+            , ((statusByte & 0x04) ? 1 : 0)
+            , ((statusByte & 0x02) ? 1 : 0)
+            , ((statusByte & 0x01) ? 1 : 0)
     );
 
     serial->printf("Pressure At Sea Lv : %d Pa\r\n", (uint32_t) config->pressureAtSeaLevel);
