@@ -72,6 +72,13 @@ class ServoManager {
 
         bool setRange(float _min, float _max)
         {
+            /**
+             * #define MIN_VALUE 0.025f
+             * #define MAX_VALUE 0.120f
+             * config->closeServoPeriod    = 0.030f;    // 0-1.0f
+             * config->openServoPeriod     = 0.041f;    // 0-1.0f // close
+             */
+
             // validation
             if(_min < MIN_VALUE || _max > MAX_VALUE || _min > _max)
             {

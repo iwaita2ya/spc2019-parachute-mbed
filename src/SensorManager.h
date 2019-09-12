@@ -178,12 +178,12 @@ namespace greysound {
                 maxAltitude = (uint8_t) params->currentAltitude;
             }
 
-            // 飛行状態チェック：現在高度が地上高度を 2.0m 以上上回っている場合はカウントアップ
+            // 飛行状態チェック：現在高度が規定値を上回っている場合はカウントアップ
             if(params->currentAltitude > (params->groundAltitude + altitudeThreshold) && flyingAltitudeCounter < counterThreshold) {
                 flyingAltitudeCounter++;
             }
 
-            // 落下状態チェック：最大到達高度より 2.0m 以上降下していたらカウントアップ
+            // 落下状態チェック：最大到達高度が規定値を下回り始めたらカウントアップ
             if((params->currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
                 fallingAltitudeCounter++;
             }
@@ -193,7 +193,7 @@ namespace greysound {
                 deployAltitudeCounter++;
             }
 
-            // 着地状態チェック：飛行状態で、現在高度が 地上高度+2.0m 以下の場合はカウントアップ
+            // 着地状態チェック：飛行状態で、現在高度が既定値を下回っていた場合はカウントアップ
             if(isFalling() && params->currentAltitude < (params->groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
                 touchDownCounter++;
             }

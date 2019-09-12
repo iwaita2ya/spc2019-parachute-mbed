@@ -841,6 +841,7 @@ void saveConfig() {
 }
 
 /**
+ * MEMO: 初期値設定
  * 設定値を初期化して変数とSRAMにそれぞれ保存する
  */
 void resetConfig() {
