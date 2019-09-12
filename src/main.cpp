@@ -57,7 +57,8 @@ RawSerial *serial;
 
 
 // Circular buffers for serial TX and RX data - used by interrupt routines
-const int serialBufferSize = 255;
+const int serialBufferSize = 64;
+const int maxDataSize = 2;
 
 // might need to increase buffer size for high baud rates
 char txBuffer[serialBufferSize+1];
@@ -71,8 +72,8 @@ volatile int rxInPointer=0;
 volatile int rxOutPointer=0;
 
 // Line buffers for sprintf and sscanf
-char txLineBuffer[80];
-char rxLineBuffer[80];
+char txLineBuffer[32];
+char rxLineBuffer[32];
 
 #ifdef DEBUG
 #define DEBUG_PRINT(fmt, ...) serial->printf(fmt, __VA_ARGS__)
@@ -489,21 +490,19 @@ void sendLine() {
 // Read a line from the large rx buffer from rx interrupt routine
 void readLine() {
 
-    int i;
-    i = 0;
     // Start Critical Section - don't interrupt while changing global buffer variables
     NVIC_DisableIRQ(UART_IRQn);
 
     // Loop reading rx buffer characters until end of line character
-    while ((i==0) || (rxLineBuffer[i-1] != '\r')) { // '\r' = 0x0d
-        rxLineBuffer[i] = rxBuffer[rxOutPointer];
-        i++;
+    int i = 0;
+    while (rxInPointer != rxOutPointer) {
+        rxLineBuffer[i++] = rxBuffer[rxOutPointer];
         rxOutPointer = (rxOutPointer + 1) % serialBufferSize;
+        //DEBUG_PRINT("rxInPointer:%d rxOutPointer:%d\r\n", rxInPointer, rxOutPointer);
     }
 
     // End Critical Section
     NVIC_EnableIRQ(UART_IRQn);
-    rxLineBuffer[i-1] = 0;
 }
 
 
