@@ -58,7 +58,6 @@ RawSerial *serial;
 
 // Circular buffers for serial TX and RX data - used by interrupt routines
 const int serialBufferSize = 64;
-const int maxDataSize = 2;
 
 // might need to increase buffer size for high baud rates
 char txBuffer[serialBufferSize+1];
@@ -76,10 +75,12 @@ char txLineBuffer[32];
 char rxLineBuffer[32];
 
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) serial->printf(fmt, __VA_ARGS__)
+#define DEBUG_PRINT(fmt) serial->printf(fmt)
+#define DEBUG_PRINTF(fmt, ...) serial->printf(fmt, __VA_ARGS__)
 #define DEBUG_PUTC(x) serial->putc(x)
 #else
-#define DEBUG_PRINT(fmt, ...)
+#define DEBUG_PRINT(fmt)
+#define DEBUG_PRINTF(fmt, ...)
 #define DEBUG_PUTC(x)
 #endif
 
@@ -340,6 +341,7 @@ int main() {
 
             // data received and not read yet?
             if (rxInPointer != rxOutPointer) {
+                //DEBUG_PRINTF("Diff: rxIN:%d, rxOut:%d\r\n", rxInPointer, rxOutPointer);
 
                 readLine();
                 char commandByte = rxLineBuffer[0];
@@ -498,7 +500,7 @@ void readLine() {
     while (rxInPointer != rxOutPointer) {
         rxLineBuffer[i++] = rxBuffer[rxOutPointer];
         rxOutPointer = (rxOutPointer + 1) % serialBufferSize;
-        //DEBUG_PRINT("rxInPointer:%d rxOutPointer:%d\r\n", rxInPointer, rxOutPointer);
+        //DEBUG_PRINTF("rxInPointer:%d rxOutPointer:%d\r\n", rxInPointer, rxOutPointer);
     }
 
     // End Critical Section
@@ -515,7 +517,7 @@ void interruptRx() {
         rxBuffer[rxInPointer] = serial->getc();
 
         // Uncomment to Echo to USB serial to watch data flow
-        //serial->putc(rxBuffer[rxInPointer]); // echo back
+        //DEBUG_PUTC(rxBuffer[rxInPointer]); // echo back
         rxInPointer = (rxInPointer + 1) % serialBufferSize;
     }
 }
