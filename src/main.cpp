@@ -247,8 +247,7 @@ int main() {
     // Init Probe Buttons
     initProbePin = new InterruptIn(P0_23);     // デバイス開始ボタン
     initProbePin->mode(PullUp);
-//    initProbePin->fall(&startDevice);
-    initProbePin->fall(&resetDevice);
+    initProbePin->fall(&startDevice);
 
     // Set Falling Pin ON->OFF
     falling = new DigitalOut(P0_17);
