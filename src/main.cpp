@@ -249,9 +249,11 @@ int main() {
     initProbePin->mode(PullUp);
     initProbePin->fall(&startDevice);
 
-    // set falling as high
+    // Set Falling Pin ON->OFF
     falling = new DigitalOut(P0_17);
-    falling->write(1);
+    falling->write(0); // 落下検知ピンON
+    wait_ms(100);
+    falling->write(1); // 落下検知ピンOFF
 
     // LED 点滅開始
     led = new DigitalOut(P0_7);
