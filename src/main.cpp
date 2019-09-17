@@ -298,7 +298,7 @@ int main() {
             if(sensorManager->isTouchDown()) {
                 DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
                 updateStatus(config->statusFlags | TOUCH_DOWN);
-                falling->write(1);
+                falling->write(1); // 落下検知ピンOFF
             }
         }
         else if(config->statusFlags & FALLING) { // 落下中
@@ -1030,14 +1030,15 @@ void printSensorValuesReadable() {
 // ボタン押下に応じてサーボの開閉を行う
 static void changeServoState()
 {
-//    DEBUG_PRINT("changeServoState()\r\n");
+    DEBUG_PRINT("changeServoState()\r\n");
     servoManager->flipState();
 }
 
 // 地上の高度をセットする
 static void setGroundAltitude()
 {
-//    DEBUG_PRINT("setGroundAltitude()\r\n");
+    DEBUG_PRINT("setGroundAltitude()\r\n");
+
     // 地表高度設定
     sensorManager->calculateGroundAltitude();
 
@@ -1048,7 +1049,7 @@ static void setGroundAltitude()
 // デバイスを開始する
 static void startDevice()
 {
-//    DEBUG_PRINT("startDevice()\r\n");
+    DEBUG_PRINT("startDevice()\r\n");
     updateStatus(config->statusFlags | INIT);
 }
 
@@ -1095,9 +1096,9 @@ void resumeStatus() {
     }
 
     if(config->statusFlags & FALLING) { // 落下中
-        DEBUG_PRINT("[FALLING] Set falling pin as LOW\r\n");
+        DEBUG_PRINT("[FALLING] Set falling pin as ON\r\n");
 
-        falling->write(0); // 落下検知ピンをLOWに
+        falling->write(0); // 落下検知ピンON
     }
 
     if(config->statusFlags & OPEN_PARA) { // パラシュート開放
@@ -1108,9 +1109,9 @@ void resumeStatus() {
     }
 
     if(config->statusFlags & TOUCH_DOWN) { // 着地
-        DEBUG_PRINT("[TOUCH_DOWN] Set falling pin as HIGH\r\n");
+        DEBUG_PRINT("[TOUCH_DOWN] Set falling pin as OFF\r\n");
 
-        falling->write(1);
+        falling->write(1); // 落下検知ピンOFF
 
         // システム停止
         while(stopSensor() != RESULT_OK) {
