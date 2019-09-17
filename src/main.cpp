@@ -276,17 +276,18 @@ int main() {
         * FINISHから順に判定する
         */
         if(config->statusFlags & FINISH) { // 終了
+
             // ロギング停止
             config->enableLogging = false;
-
-            // save data onto EEPROM
-            sram->callHardwareStore();
         }
         else if(config->statusFlags & TOUCH_DOWN) { // 着地
             // システム停止
             if(stopSensor() == RESULT_OK) {
                 DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
                 updateStatus(config->statusFlags | FINISH);
+
+                // save data onto EEPROM
+                sram->callHardwareStore();
             }
         }
         else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
@@ -1118,14 +1119,11 @@ void resumeStatus() {
         }
     }
 
-    //MEMO: FINISH まで達している場合は、以下の処理はメインループ実行されるのでコメントアウト
-//    if(config->statusFlags & FINISH) { // 終了
-//        // ロギング停止
-//        config->enableLogging = false;
-//
-//        // save data onto EEPROM
-//        sram->callHardwareStore();
-//    }
+    if(config->statusFlags & FINISH) { // 終了
+        DEBUG_PRINT("[FINISH] Stop Logging\r\n");
+        // ロギング停止
+        config->enableLogging = false;
+    }
 }
 
 /**
