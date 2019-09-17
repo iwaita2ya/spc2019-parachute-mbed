@@ -192,6 +192,9 @@ static uint8_t stopSensor();
 void printSensorValues();
 void printSensorValuesReadable();
 
+// ----- Status -----
+void resumeStatus();
+
 // ----- Utils -----
 int32_t x10(float);
 
@@ -255,6 +258,11 @@ int main() {
     led->write(0); // set led off
 
     /**
+     * ステータスを維持したまま電源ONした場合、所定のステータスまで処理を進める
+     */
+    resumeStatus();
+
+    /**
      * Main Loop
      */
     while(shouldLoop == 1) {
@@ -265,22 +273,17 @@ int main() {
         * FINISHから順に判定する
         */
         if(config->statusFlags & FINISH) { // 終了
-            // DO Nothing
+            // ロギング停止
+            config->enableLogging = false;
+
+            // save data onto EEPROM
+            sram->callHardwareStore();
         }
         else if(config->statusFlags & TOUCH_DOWN) { // 着地
             // システム停止
             if(stopSensor() == RESULT_OK) {
-                // ロギング停止
-                config->enableLogging = false;
-
-                // save data onto EEPROM
-                sram->callHardwareStore();
-
-                // センサ停止したら FINISH に遷移
-                if(stopSensor() == RESULT_OK) {
-                    //DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
-                    updateStatus(config->statusFlags | FINISH);
-                }
+                DEBUG_PRINT("TOUCH_DOWN->FINISH\r\n");
+                updateStatus(config->statusFlags | FINISH);
             }
         }
         else if(config->statusFlags & OPEN_PARA) { // パラシュート開放
@@ -289,7 +292,7 @@ int main() {
 
             // 現在高度が地上高度と等しくなったら TOUCH_DOWN に遷移
             if(sensorManager->isTouchDown()) {
-                //DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
+                DEBUG_PRINT("OPEN_PARA->TOUCH_DOWN\r\n");
                 updateStatus(config->statusFlags | TOUCH_DOWN);
                 falling->write(1);
             }
@@ -298,22 +301,22 @@ int main() {
 
             // 開放高度に達したら OPEN_PARA に遷移
             if(sensorManager->isOkToDeployParachute()) {
-                //DEBUG_PRINT("FALLING->OPEN_PARA\r\n");
+                DEBUG_PRINT("FALLING->OPEN_PARA\r\n");
                 updateStatus(config->statusFlags | OPEN_PARA);
             }
         }
         else if(config->statusFlags & FLYING) { // 飛行中
             //高度が減少に転じたら FALLING に遷移
             if(sensorManager->isFalling()) {
-                //DEBUG_PRINT("FLYING->FALLING\r\n");
+                DEBUG_PRINT("FLYING->FALLING\r\n");
                 updateStatus(config->statusFlags | FALLING);
-                falling->write(0);
+                falling->write(0); // 落下検知ピンをONに
             }
         }
         else if(config->statusFlags & STAND_BY) { //
             // 規定高度に達したら FLYING に遷移
             if(sensorManager->isFlying()) {
-                //DEBUG_PRINT("STAND_BY->FLYING\r\n");
+                DEBUG_PRINT("STAND_BY->FLYING\r\n");
                 updateStatus(config->statusFlags | FLYING);
                 // ロギング開始
                 config->enableLogging = true;
@@ -322,7 +325,7 @@ int main() {
         else if(config->statusFlags & INIT) {
             // センサ開始したら STAND_BY に遷移
             if(startSensor() == RESULT_OK) {
-                //DEBUG_PRINT("INIT->STAND_BY\r\n");
+                DEBUG_PRINT("INIT->STAND_BY\r\n");
                 updateStatus(config->statusFlags | STAND_BY);
             }
         }
@@ -922,11 +925,13 @@ static uint8_t startSensor()
 {
     // null チェック
     if(sensorManager == NULL) {
+        DEBUG_PRINT("[ERROR] sensorManager is NULL\r\n");
         return RESULT_NG;
     }
 
     // センサ開始
     if(sensorManager->begin() != RESULT_OK) {
+        DEBUG_PRINT("[ERROR] Failed to activite \r\n");
         return RESULT_NG;
     }
 
@@ -941,8 +946,8 @@ static uint8_t startSensor()
 // センサ情報を更新する
 static void updateSensor()
 {
-    if(sensorManager) {
-        sensorManager->update();
+    if(sensorManager->update() == RESULT_NG) {
+        DEBUG_PRINT("ERROR ON UPDATE\r\n");
     }
 }
 
@@ -1043,11 +1048,81 @@ static void startDevice()
     updateStatus(config->statusFlags | INIT);
 }
 
-// プローブを開始する
+// 全ての処理を中断して、かつ変数を初期化する
 static void resetDevice()
 {
+    config->enableLogging = false; // ロギング停止
+    stopSensor(); // センサ停止
+    falling->write(1); // 落下検知ピンOFF
+    //servoManager->moveLeft(); // close
+
     resetConfig();              // 設定初期化
-    servoManager->moveRight();  // サーボ開放
+}
+
+/**
+ * Status
+ */
+
+/**
+ * 現在のステータスフラグをもとに、所定の処理を実行する
+ * 流れとしてはメインループで行うステータス処理の逆順になる
+ */
+void resumeStatus() {
+
+    if(config->statusFlags & INIT) {
+        DEBUG_PRINT("[INIT] startSensor()\r\n");
+
+        // センサ開始
+        while(startSensor() != RESULT_OK) {
+            DEBUG_PRINT("startSensor() Failed\r\n");
+            wait_ms(100);
+        }
+    }
+
+//    if(config->statusFlags & STAND_BY) { //
+//        DEBUG_PRINT("STAND_BY\r\n");
+//    }
+
+    if(config->statusFlags & FLYING) { // 飛行中
+        DEBUG_PRINT("[FLYING] enable Logging\r\n");
+
+        // ロギング開始
+        config->enableLogging = true;
+    }
+
+    if(config->statusFlags & FALLING) { // 落下中
+        DEBUG_PRINT("[FALLING] Set falling pin as LOW\r\n");
+
+        falling->write(0); // 落下検知ピンをLOWに
+    }
+
+    if(config->statusFlags & OPEN_PARA) { // パラシュート開放
+        DEBUG_PRINT("[OPEN_PARA] Open Servo\r\n");
+
+        // パラシュート開放
+        servoManager->moveRight(); // open
+    }
+
+    if(config->statusFlags & TOUCH_DOWN) { // 着地
+        DEBUG_PRINT("[TOUCH_DOWN] Set falling pin as HIGH\r\n");
+
+        falling->write(1);
+
+        // システム停止
+        while(stopSensor() != RESULT_OK) {
+            DEBUG_PRINT("stopSensor() Failed\r\n");
+            wait_ms(100);
+        }
+    }
+
+    //MEMO: FINISH まで達している場合は、以下の処理はメインループ実行されるのでコメントアウト
+//    if(config->statusFlags & FINISH) { // 終了
+//        // ロギング停止
+//        config->enableLogging = false;
+//
+//        // save data onto EEPROM
+//        sram->callHardwareStore();
+//    }
 }
 
 /**

@@ -127,7 +127,7 @@ namespace greysound {
                     result = this->getStandBy();
                     break;
 
-                case ACTIVE: //MEMO: ACTIVEの場合は処理をしないほうが良い？（電源喪失時等を考慮して）
+                case ACTIVE:
                 case BUSY:
                     this->end(); // 既に実行中の場合は一旦停止
                     break;
@@ -158,9 +158,9 @@ namespace greysound {
         // データを読み取る
         uint8_t update()
         {
-            // すでに処理が走っている場合はスキップ（処理自体は成功とする）
+            // すでに処理が走っている場合はスキップ
             if (currentState == BUSY) {
-                return 0;
+                return 1;
             }
 
             // BUSY 状態に遷移
