@@ -1,42 +1,42 @@
 //
-// Created by iwait on 4/8/19.
+// Created by Tatsuya Iwai (GreySound) on 4/8/19.
 //
 #include <stdint.h>
 #include "SerialSRAM.h"
 
 namespace greysound {
 
-/**
- * Constructor
- * @param sda I2C SDA
- * @param scl I2C SCL
- * @param hs Hardware Store (Manually Initiate Store/Recall)
- * @param A2
- * @param A1
- */
-SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, const uint8_t A1) : i2c (sda, scl) {
-    //build mask
-    uint8_t mask = (A2 << 3) | (A1 << 2);
+    /**
+     * Constructor
+     * @param sda I2C SDA
+     * @param scl I2C SCL
+     * @param hs Hardware Store (Manually Initiate Store/Recall)
+     * @param A2
+     * @param A1
+     */
+    SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, const uint8_t A1) : i2c (sda, scl) {
+        //build mask
+        uint8_t mask = (A2 << 3) | (A1 << 2);
 
-    //save registers addresses
-    this->SRAM_REGISTER_WRITE = (uint8_t) 0xA0 | mask;
-    this->SRAM_REGISTER_READ  = (uint8_t) 0xA1 | mask;
-    this->CONTROL_REGISTER_WRITE = (uint8_t) 0x30 | mask;
-    this->CONTROL_REGISTER_READ  = (uint8_t) 0x31 | mask;
+        //save registers addresses
+        this->SRAM_REGISTER_WRITE = (uint8_t) 0xA0 | mask;
+        this->SRAM_REGISTER_READ  = (uint8_t) 0xA1 | mask;
+        this->CONTROL_REGISTER_WRITE = (uint8_t) 0x30 | mask;
+        this->CONTROL_REGISTER_READ  = (uint8_t) 0x31 | mask;
 
-    // init hs pin
-    this->hardwareStore = new DigitalOut(hs);
-    this->hardwareStore->write(0); // hs=0
+        // set hs pin as low
+        this->hardwareStore = new DigitalOut(hs);
+        this->hardwareStore->write(0); // hs=0
 
-    //TODO: Set I2C bus speed as 1Mhz (default: 100KHz)
-//    i2c.frequency(1000000);
-}
+        //TODO: Set I2C bus speed at 1Mhz (default: 100KHz)
+    //    i2c.frequency(1000000);
+    }
 
-/**
- * Read at current address
- * @param buffer
- * @return
- */
+    /**
+     * Read at current address
+     * @param buffer
+     * @return
+     */
     uint8_t SerialSRAM::read(char *buffer) {
 
         static uint8_t result;
@@ -47,12 +47,12 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return result;
     }
 
-/**
- * Random Read
- * @param address
- * @param buffer
- * @return
- */
+    /**
+     * Random Read
+     * @param address
+     * @param buffer
+     * @return
+     */
     uint8_t SerialSRAM::read(const uint16_t address, char *buffer) {
 
         static char array[2];
@@ -71,13 +71,13 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return result;
     }
 
-/**
- * Seq. Read w/ address
- * @param address
- * @param buffer
- * @param size
- * @return
- */
+    /**
+     * Seq. Read w/ address
+     * @param address
+     * @param buffer
+     * @param size
+     * @return
+     */
     uint8_t SerialSRAM::read(const uint16_t address, char *buffer, const uint16_t size) {
 
         static char array[2];
@@ -96,12 +96,12 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return result;
     }
 
-/**
- * Single Byte Write
- * @param address
- * @param data
- * @return
- */
+    /**
+     * Single Byte Write
+     * @param address
+     * @param data
+     * @return
+     */
     uint8_t SerialSRAM::write(const uint16_t address, const uint8_t data) {
 
         static uint8_t result = 0x00;
@@ -115,16 +115,15 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return result;
     }
 
-/**
- * Seq. Bytes Write w/ address
- * @param address
- * @param data
- * @param size
- * @return
- */
+    /**
+     * Seq. Bytes Write w/ address
+     * @param address
+     * @param data
+     * @param size
+     * @return
+     */
     uint8_t SerialSRAM::write(const uint16_t address, const char *data, const uint16_t size) {
 
-//    char *buffer = new char[(size+2)];
         char *buffer = new char[size+2];
 
         // set address
@@ -140,20 +139,20 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return result;
     }
 
-/**
- * Read Control Register
- * @return
- */
+    /**
+     * Read Control Register
+     * @return
+     */
     uint8_t SerialSRAM::readControlRegister(char *buffer) {
         return i2c.read(this->CONTROL_REGISTER_READ, buffer, 1);
     }
 
-/**
- * Write Control Register (either STATUS or COMMAND)
- * @param address
- * @param value
- * @return
- */
+    /**
+     * Write Control Register (either STATUS or COMMAND)
+     * @param address
+     * @param value
+     * @return
+     */
     uint8_t SerialSRAM::writeControlRegister(const uint8_t address, const uint8_t value) {
 
         static uint8_t result = 0x00;
@@ -176,10 +175,10 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         return (buffer & 0x02) >> 1;
     }
 
-/**
- * Set AutoStore Value (ASE)
- * @param value true:enable, false:disable
- */
+    /**
+     * Set AutoStore Value (ASE)
+     * @param value true:enable, false:disable
+     */
     void SerialSRAM::setAutoStore(const uint8_t value) {
         static char buffer = 0x00;
 
@@ -198,5 +197,14 @@ SerialSRAM::SerialSRAM(PinName sda, PinName scl, PinName hs, const uint8_t A2, c
         // レジスタ更新
         this->writeControlRegister(0x00, buffer);
     }
-    
+
+    uint8_t SerialSRAM::callHardwareStore() {
+
+        // generate LOW->HIGH->LOG trigger
+        this->hardwareStore->write(1);
+        wait_us(10); // must longer than > 150ns
+        this->hardwareStore->write(0);
+
+        return 0;
+    }
 }

@@ -23,10 +23,12 @@ THE SOFTWARE.
 #ifndef MS5607_BASE_H
 #define MS5607_BASE_H
 
+#define PRESSURE_AT_SEA_LEVEL 101100.0f // (Pa: 100Pa=1hPa)
+
 class MS5607Base {
 public:
     void printCoefficients() {
-        printf("%d, %d, %d, %d, %d, %d\r\n", c1, c2, c3, c4, c5, c6);
+        printf("%ld, %ld, %ld, %ld, %ld, %ld\r\n", c1, c2, c3, c4, c5, c6);
     }
 
     int getRawTemperature() {
@@ -71,12 +73,17 @@ public:
         return float((((int64_t) getRawPressure() * sens >> 21) - off) >> 15);
     }
 
-    float getAltitude(int presssure = 0) {
-        return toAltitude(presssure ? presssure : (int) getPressure());
+    float getAltitude(int pressure = 0) {
+        return toAltitude(pressure > 0 ? pressure : (int) getPressure());
+    }
+
+    void setPressureAtSeaLevel(float pressureAtSeaLevel) {
+        p0 = pressureAtSeaLevel;
     }
 
 protected:
     int32_t c1, c2, c3, c4, c5, c6;
+    float p0;
 
     enum {
         RESET     = 0x1E,
@@ -104,15 +111,16 @@ protected:
         c4 = readPROM(4);
         c5 = readPROM(5);
         c6 = readPROM(6);
+        p0 = PRESSURE_AT_SEA_LEVEL;
     }
 
     float toAltitude(int pressure) {
         // Ref. 29124-AltimeterAppNote1.pdf
         const float R = 287.052; // specific gas constant R*/M0
-        const float g = 9.80665; // standard gravity 
+        const float g = 9.80665; // standard gravity
         const float t_grad = 0.0065; // gradient of temperature
         const float t0 = 273.15f + 15; // temperature at 0 altitude
-        const float p0 = 101820; // pressure at 0 altitude
+        //const float p0 = 101100; // pressure at 0 altitude　//グローバル変数に変更
 
         return t0 / t_grad * (1 - exp((t_grad * R / g) * log(pressure / p0)));
     }

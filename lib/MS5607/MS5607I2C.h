@@ -27,9 +27,14 @@ THE SOFTWARE.
 
 class MS5607I2C : public MS5607Base {
 public:
+
     MS5607I2C(PinName sda, PinName scl, int csb = 0) : i2c(sda, scl), i2cAddr(csb ? 0xEC : 0xEE) {
         init();
     }
+
+    virtual ~MS5607I2C(){
+
+    };
 
 private:
     I2C i2c;
