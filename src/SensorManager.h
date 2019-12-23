@@ -183,8 +183,8 @@ namespace greysound {
                 flyingAltitudeCounter++;
             }
 
-            // 落下状態チェック：最大到達高度が規定値を下回り始めたらカウントアップ
-            if((params->currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
+            // 落下状態チェック：現在高度が最大到達高度ー規定値を下回り始めたらカウントアップ
+            if(isFlying() && (params->currentAltitude + altitudeThreshold) < maxAltitude &&  fallingAltitudeCounter < counterThreshold) {
                 fallingAltitudeCounter++;
             }
 
@@ -194,7 +194,7 @@ namespace greysound {
             }
 
             // 着地状態チェック：飛行状態で、現在高度が既定値を下回っていた場合はカウントアップ
-            if(isFalling() && params->currentAltitude < (params->groundAltitude + altitudeThreshold) && touchDownCounter < counterThreshold) {
+            if(isFalling() && params->currentAltitude < (params->groundAltitude + 1) && touchDownCounter < counterThreshold) { //FIXME: 変数で持つ
                 touchDownCounter++;
             }
 
@@ -278,11 +278,17 @@ namespace greysound {
          * カウンタ群リセット
          */
         void resetCounters() {
+            maxAltitude = 0; // カウンタじゃないけど初期化
+            altitudeThreshold = params->altitudeThreshold;
+            counterThreshold  = params->counterThreshold;
+            deployParachuteAt = params->deployParachuteAt;
+
             activeTimeMs = 0;
             flyingAltitudeCounter  = 0;
             fallingAltitudeCounter = 0;
             deployAltitudeCounter  = 0;
             touchDownCounter       = 0;
+
         }
 
         /**

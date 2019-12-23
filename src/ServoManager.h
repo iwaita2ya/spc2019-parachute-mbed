@@ -85,8 +85,10 @@ class ServoManager {
                 return false;
             }
 
-            minValue = _min;
-            maxValue = _max;
+//            minValue = _min;
+//            maxValue = _max;
+            minValue = 0.030f;
+            maxValue = 0.041; //FIXME: OpenServoの値が正しくはいらないためハードコード
 
             return true;
         }

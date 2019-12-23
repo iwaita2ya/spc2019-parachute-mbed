@@ -234,10 +234,12 @@ int main() {
     sensorTicker  = new Ticker();
     sensorManager = new SensorManager(P0_5, P0_4, 0xD6, 0x3C, config); // sda, scl, agAddr, mAddr
 
+#ifdef DEBUG
     // Set Altitude Button
     setAltitudePin = new InterruptIn(P1_19); // 地表高度設定ボタン
     setAltitudePin->mode(PullUp);
-    setAltitudePin->fall(&setGroundAltitude);
+//    setAltitudePin->fall(&setGroundAltitude);
+    setAltitudePin->fall(&resetDevice);
 
     // Servo Open/Close Buttons
     servoControlPin = new InterruptIn(P0_20);// サーボ操作ボタン
@@ -248,6 +250,7 @@ int main() {
     initProbePin = new InterruptIn(P0_23);     // デバイス開始ボタン
     initProbePin->mode(PullUp);
     initProbePin->fall(&startDevice);
+#endif
 
     // Set Falling Pin ON->OFF
     falling = new DigitalOut(P0_17);
@@ -269,6 +272,12 @@ int main() {
      */
     while(shouldLoop == 1) {
 
+//        DEBUG_PRINTF("currentAltitude:%d\r\n", config->currentAltitude);
+//        DEBUG_PRINTF("maxAltitude:%d\r\n", sensorManager->maxAltitude);
+//        DEBUG_PRINTF("flyingAltitudeCounter:%d\r\n", sensorManager->flyingAltitudeCounter);
+//        DEBUG_PRINTF("fallingAltitudeCounter:%d\r\n", sensorManager->fallingAltitudeCounter);
+//        DEBUG_PRINTF("deployAltitudeCounter:%d\r\n", sensorManager->deployAltitudeCounter);
+//        DEBUG_PRINTF("touchDownCounter:%d\r\n", sensorManager->touchDownCounter);
         /**
         * プローブステータスに応じて処理を分岐
         * ステータスフラグはINITから順番に立てられる（クリアされない）ので
@@ -359,53 +368,53 @@ int main() {
 //                    case 0x10: // ステータス表示 (ascii)
 //                        printStatusVarsReadable();
 //                        break;
-//                    case 0x20: // ステータス更新
-//                        updateStatus(rxLineBuffer[1]);
-//                        break;
+                    case 0x20: // ステータス更新
+                        updateStatus(rxLineBuffer[1]);
+                        break;
 //                    case 0x30: // ステータス初期化
 //                        updateStatus(0x00);
 //                        break;
-                    case 0x40: // SRAM 設定表示 (hex)
-                        printConfigSRAM();
-                        break;
-                    case 0x41: // SRAM 設定表示 (ascii)
-                        printConfigSRAMReadable();
-                        break;
-                    case 0x50: // 変数設定表示 (hex)
-                        printConfigVars();
-                        break;
+//                    case 0x40: // SRAM 設定表示 (hex)
+//                        printConfigSRAM();
+//                        break;
+//                    case 0x41: // SRAM 設定表示 (ascii)
+//                        printConfigSRAMReadable();
+//                        break;
+//                    case 0x50: // 変数設定表示 (hex)
+//                        printConfigVars();
+//                        break;
                     case 0x51: // 変数設定表示 (ascii)
                         printConfigVarsReadable();
                         break;
-                    case 0x60: //TODO: 設定更新
-                        break;
+//                    case 0x60: //TODO: 設定更新
+//                        break;
                     case 0x70: // 設定初期化
                         resetConfig();
                         break;
-                    case 0x71: // 設定をSRAMから読み込む
-                        loadConfig();
-                        break;
-                    case 0x72: // 設定をSRAMに書き込む
-                        saveConfig();
-                        break;
-                    case 0x80: // ログ書込
-                        writeCurrentData(config->statusFlags, config->currentAltitude);
-                        break;
+//                    case 0x71: // 設定をSRAMから読み込む
+//                        loadConfig();
+//                        break;
+//                    case 0x72: // 設定をSRAMに書き込む
+//                        saveConfig();
+//                        break;
+//                    case 0x80: // ログ書込
+//                        writeCurrentData(config->statusFlags, config->currentAltitude);
+//                        break;
                     case 0x90: // ログデータ消去
                         clearLog();
                         break;
-                    case 0xA0: // メモリダンプ　(hex)
-                        dumpMemory();
-                        break;
+//                    case 0xA0: // メモリダンプ　(hex)
+//                        dumpMemory();
+//                        break;
                     case 0xB0: // メモリダンプ　(ascii)
                         dumpMemoryReadable();
                         break;
-                    case 0xC0: // センサ値取得 (hex)
-                        printSensorValues();
-                        break;
-//                    case 0xD0: // センサ値取得 (ascii)
-//                        printSensorValuesReadable();
+//                    case 0xC0: // センサ値取得 (hex)
+//                        printSensorValues();
 //                        break;
+                    case 0xD0: // センサ値取得 (ascii)
+                        printSensorValuesReadable();
+                        break;
                     case 0xE0: // サーボ開閉
                         servoManager->flipState();
                         break;
@@ -415,9 +424,9 @@ int main() {
                     case 0xF1: // デバイス開始
                         startDevice();
                         break;
-//                    case 0xF2: // デバイス初期化
-//                        resetDevice();
-//                        break;
+                    case 0xF2: // デバイス初期化
+                        resetDevice();
+                        break;
                     default:
                         break;
                 }
@@ -855,12 +864,12 @@ void resetConfig() {
 
     // getStandBy config with default value
     config->statusFlags         = 0x00;      // ステータスフラグ
-    config->pressureAtSeaLevel  = 101448.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
+    config->pressureAtSeaLevel  = 102600.0f; // 海抜0mの大気圧(低すぎると高度が0になるので注意)
     config->groundAltitude      = 0;        // 地表高度
     config->currentAltitude     = 0;        // 現在高度
-    config->deployParachuteAt   = 20;        // パラシュート開放高度(地表高度に加算)
+    config->deployParachuteAt   = 50;        // パラシュート開放高度(地表高度に加算)(MEMO:50m)
     config->counterThreshold    = 3;         // 状態カウンタのしきい値（この回数に達したら、その状態が発生したと判断する）
-    config->altitudeThreshold   = 30;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす
+    config->altitudeThreshold   = 30;         // 現在高度が地表高度＋この値を上回っていたら飛行中とみなす(MEMO:30m)
     config->openServoPeriod     = 0.041f;    // 0-1.0f // close
     config->closeServoPeriod    = 0.030f;    // 0-1.0f
     config->enableLogging       = 0x00;      // 0x01:true 0x00:false
